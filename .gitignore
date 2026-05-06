@@ -1,0 +1,64 @@
+# Build outputs
+bin/
+obj/
+out/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Rider / JetBrains
+.idea/
+*.DotSettings.user
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Test results
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+coverage/
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+!packages/build/
+
+# Publish
+publish/
+*.Publish.xml
+PublishProfiles/*.user
+*.pubxml.user
+
+# User-specific config
+appsettings.Development.json
+appsettings.Local.json
+secrets.json
+*.pfx
+*.key
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node (in case any tooling shows up)
+node_modules/
+npm-debug.log*
+
+# Database backups / dumps
+*.bak
+*.mdf
+*.ldf
