@@ -867,3 +867,31 @@ A few patterns specific to the multi-stage refactor:
 - **`RewoundToStageIndex` is set on the stage that initiated the rewind**, not the rewind target. This is the key audit signal for "the reviewer at stage 2 made the call to send to stage 0."
 - **`IsFinalApproval` distinguishes `sp_AdvanceStage` from `sp_ApproveFinal`.** They are separate procedures because the post-condition differs (advance pointer vs. transition to Approved). The application layer chooses which to call by reading the current stage's `IsFinalApproval` flag.
 - **Per-stage timestamps are reset on rewind** for stages from target through current (`StartedAtUtc`, `CompletedAtUtc`, `Outcome` cleared); `EnteredAtUtc` is preserved for audit. The schema column comments describe this as "Reset to NULL on rewind"; the design decision is that `WorkstreamStage` reflects current state, with `AuditEvent` carrying full history.
+
+### Closed-period write freeze
+
+Every state-transition stored procedure must check that the workstream's `ClosePeriod` is open (`ClosedAtUtc IS NULL`) as its first action. This includes `sp_AcquireLock`, `sp_SubmitWorkstream`, `sp_AdvanceStage`, `sp_SendBackToStage`, `sp_ApproveFinal`, `sp_ApproveChecklistItem`, and `sp_FlagChecklistItemWithComment`. Closing a period freezes write paths on its workstreams; reopening unfreezes them. This rule is established in `docs/design/10-period-management.md` and enforced at the SP level.
+
+The cleanest pattern is a small helper:
+
+```sql
+CREATE PROCEDURE sp_AssertPeriodOpen
+    @WorkstreamId bigint
+AS
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM Workstream w
+        INNER JOIN ClosePeriod cp ON cp.ClosePeriodId = w.ClosePeriodId
+        WHERE w.WorkstreamId = @WorkstreamId
+          AND cp.ClosedAtUtc IS NULL
+          AND cp.IsDeleted = 0
+    ) BEGIN
+        THROW 50050, 'Period is closed; reopen the period to make changes', 1;
+    END;
+END;
+```
+
+Each state-transition SP calls `EXEC sp_AssertPeriodOpen @WorkstreamId` as its first action, before any UPDATE. The THROW propagates as an exception the application layer translates into a user-readable message (the close-period dialog text from `10-period-management.md` is the canonical wording).
+
+Read paths (queue queries, dashboard, audit search) are unaffected — closed periods remain fully visible for reporting and audit. Only state-changing actions are blocked.
