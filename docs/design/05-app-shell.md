@@ -8,8 +8,8 @@ Three logical groups, separated by dividers:
 
 ### Your work (all users)
 
-- **Dashboard** — the user's landing page. Renders the portfolio view: a multi-entity grid showing the state of every entity-close the user can see. Staff accountants see only their 8-12 assigned entities; managers and CFOs see the full portfolio. Same component, different scope. See `01-portfolio-view.md` for detail.
-- **Work items** — the user's queue of individual workstreams needing their attention (preparing or reviewing). Shows a red badge with count when work is waiting. Distinct from Dashboard: Dashboard is entity-close status; Work items is workstream-level tasks.
+- **Dashboard** — the user's landing page. Renders the portfolio view: a multi-entity grid showing the state of every entity-close where the user holds any role assignment. Visibility is automatic and uniform — the same component for everyone, scoped by assignments. A staff accountant sees ~10 entities; a CFO assigned across the whole org sees everything. See `01-portfolio-view.md`.
+- **Work items** — the user's queue of individual workstreams needing their attention (preparing or reviewing) right now. Shows a red badge with count when work is waiting. Distinct from Dashboard: Dashboard is entity-close status (read-only summary); Work items is workstream-level tasks the user must act on.
 - **My history** — a personal audit trail; what the user has worked on, including past closes
 
 ### Configuration (admin only)

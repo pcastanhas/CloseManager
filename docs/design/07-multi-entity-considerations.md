@@ -35,9 +35,31 @@ Two things this enables:
 - **Backup coverage**: Plaza Tower has both Erin and Sam as Treasury-RE. If Erin's out, Sam picks up.
 - **Specialization by entity type**: Treasury-RE for real estate is a different role assignment than Treasury-Inv for investment funds, even if it's the same person — modeling them as distinct roles lets you split the role later without restructuring.
 
+## Visibility on the Dashboard
+
+The Dashboard shows every workstream where the current user holds *any* role assignment on the entity. This is the same query for everyone — there are no special "manager" or "admin" overrides. The size of a user's Dashboard is purely a function of how many entity-role rows they have:
+
+```sql
+SELECT w.*
+FROM Workstream w
+WHERE w.IsDeleted = 0
+  AND EXISTS (
+    SELECT 1
+    FROM EntityRoleAssignment era
+    WHERE era.EntityId = w.EntityId
+      AND era.UserId = @UserId
+      AND era.IsDeleted = 0
+      AND era.RoleId IN (w.PreparerRoleId, w.ReviewerRoleId)
+  );
+```
+
+Read access flows broadly from entity-role assignment: if you're the Preparer for Plaza Tower, you also see how the downstream reviews are progressing. Write access is gated separately by the lock-acquisition rule, which only lets you act on workstreams whose status matches your role.
+
+To give a user CFO-level visibility across the org, assign them to a CFO role on every entity. To restrict a user to ten entities, give them assignments only on those ten. The role assignment table is the access control list; there is no parallel permission system.
+
 ## Reviewer queue queries
 
-The reviewer queue is just:
+The reviewer queue is similar to the Dashboard query, but filtered to the user's reviewer role and to states where reviewer action is meaningful:
 
 ```sql
 SELECT w.* FROM Workstream w

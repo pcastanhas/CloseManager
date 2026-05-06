@@ -1,19 +1,25 @@
 # Portfolio view
 
-The portfolio view is the answer to the question "across all entity-closes, where are the bottlenecks?" It is rendered as the **Dashboard** for users who have manager- or CFO-level permission to see the full close.
+The portfolio view is the answer to the question "across all entity-closes I can see, where are the bottlenecks?" It is rendered as the **Dashboard** for every user. The visual is the same regardless of who's looking; what differs is the *filter*: the workstreams a user can see are exactly those for entities they are assigned to in any role.
 
 ## Terminology
 
 A few terms have been used interchangeably during design and are worth pinning down:
 
-- **Dashboard** — the sidebar item and the route (`/`). Always the user's landing page. Content varies by role: staff accountants see only their assigned entities; managers and CFOs see the full portfolio view described in this document.
-- **Portfolio view** — the multi-entity grid described here. It is the *content* rendered on the Dashboard for users with cross-portfolio permission.
+- **Dashboard** — the sidebar item and the route (`/`). Always the user's landing page. Always renders the portfolio view component.
+- **Portfolio view** — the multi-entity grid described here. The same component for everyone, scoped automatically by the user's role assignments.
 - **Heatmap** — earlier informal term for this view. Avoid it going forward; the design isn't a fixed-cell heatmap anymore (see below).
-- **Work items** — a separate sidebar item. The queue of items waiting on the current user specifically. Different from Dashboard: the Dashboard shows entity-close status; Work items shows individual workstream-level tasks.
+- **Work items** — a separate sidebar item. The queue of items waiting on the current user specifically. Different from Dashboard: the Dashboard shows entity-close *status*; Work items shows individual workstream-level *tasks* the user must act on now.
+
+## Visibility model
+
+The Dashboard shows every workstream where the current user holds *any* role assignment on the entity — Preparer, Reviewer, or otherwise. Read access flows broadly from entity-role assignment; the user can see how all workstreams on "their" entities are progressing, even ones they can't currently act on. Write access (the lock-acquisition rule) is separately gated to the role appropriate for the current status.
+
+A staff accountant assigned to 10 entities sees ~50-70 workstreams. A reviewer assigned to many entities for one role sees a wider but possibly shallower slice. A CFO assigned to a CFO role on every entity sees the whole org. There is no "manager view" or "full-portfolio override" — the assignment table itself is the visibility model. To give someone broader visibility, give them more role assignments.
 
 ## The job to be done
 
-The portfolio view answers "across all entity-closes, where are the bottlenecks?" It is the primary surface for managers and senior accountants. For staff accountants, the same Dashboard route renders a smaller version scoped to their own 8-12 entities — same component, fewer rows.
+The portfolio view answers "where are the bottlenecks?" within the slice of work the user can see. For a staff accountant this is "are any of my entities stuck?" For a senior reviewer it's "where is my queue backed up?" For a CFO it's "is the whole close on track?" Same question, different scopes — same component renders all three.
 
 ## The wrong design we considered first
 
