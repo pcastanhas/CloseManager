@@ -37,41 +37,45 @@ Two things this enables:
 
 ## Visibility on the Dashboard
 
-The Dashboard shows every workstream where the current user holds *any* role assignment on the entity. This is the same query for everyone — there are no special "manager" or "admin" overrides. The size of a user's Dashboard is purely a function of how many entity-role rows they have:
+The Dashboard shows every workstream where the current user holds *any* role assignment on the entity that maps to *any stage* of that workstream. The size of a user's Dashboard is purely a function of how many entity-role rows they have intersected with which stages those roles appear in:
+
+```sql
+SELECT DISTINCT w.*
+FROM Workstream w
+INNER JOIN WorkstreamStage ws ON ws.WorkstreamId = w.WorkstreamId AND ws.IsDeleted = 0
+INNER JOIN EntityRoleAssignment era
+    ON era.EntityId = w.EntityId
+   AND era.RoleId = ws.RoleId
+   AND era.UserId = @UserId
+   AND era.IsDeleted = 0
+WHERE w.IsDeleted = 0;
+```
+
+Read access flows broadly from entity-role assignment: if you're the Preparer for Plaza Tower, you also see how the downstream review stages are progressing. Write access is gated separately by the lock-acquisition rule, which only lets you act on workstreams whose *current stage* maps to your role.
+
+To give a user CFO-level visibility across the org, assign them to a CFO role on every entity (the CFO role being one of the stages in the relevant templates). To restrict a user to ten entities, give them assignments only on those ten. The role assignment table is the access control list; there is no parallel permission system.
+
+## Work items queue queries
+
+The work items queue is similar to the Dashboard query but narrower: only workstreams where the current stage maps to the user's role and the workstream is awaiting that stage's action:
 
 ```sql
 SELECT w.*
 FROM Workstream w
-WHERE w.IsDeleted = 0
-  AND EXISTS (
-    SELECT 1
-    FROM EntityRoleAssignment era
-    WHERE era.EntityId = w.EntityId
-      AND era.UserId = @UserId
-      AND era.IsDeleted = 0
-      AND era.RoleId IN (w.PreparerRoleId, w.ReviewerRoleId)
-  );
-```
-
-Read access flows broadly from entity-role assignment: if you're the Preparer for Plaza Tower, you also see how the downstream reviews are progressing. Write access is gated separately by the lock-acquisition rule, which only lets you act on workstreams whose status matches your role.
-
-To give a user CFO-level visibility across the org, assign them to a CFO role on every entity. To restrict a user to ten entities, give them assignments only on those ten. The role assignment table is the access control list; there is no parallel permission system.
-
-## Reviewer queue queries
-
-The reviewer queue is similar to the Dashboard query, but filtered to the user's reviewer role and to states where reviewer action is meaningful:
-
-```sql
-SELECT w.* FROM Workstream w
+INNER JOIN WorkstreamStage ws
+    ON ws.WorkstreamId = w.WorkstreamId
+   AND ws.OrderIndex = w.CurrentStageIndex
+   AND ws.IsDeleted = 0
 INNER JOIN EntityRoleAssignment era
-  ON era.EntityId = w.EntityId
- AND era.RoleId = w.ReviewerRoleId
- AND era.UserId = @UserId
- AND era.IsDeleted = 0
-WHERE w.Status IN ('Submitted', 'InReview') AND w.IsDeleted = 0;
+    ON era.EntityId = w.EntityId
+   AND era.RoleId = ws.RoleId
+   AND era.UserId = @UserId
+   AND era.IsDeleted = 0
+WHERE w.IsDeleted = 0
+  AND w.Status IN ('NotStarted', 'InProgress', 'NeedsRevision');
 ```
 
-The (EntityId, RoleId, UserId) index on EntityRoleAssignment plus the (ReviewerRoleId, Status) index on Workstream cover this efficiently.
+The (EntityId, RoleId, UserId) index on EntityRoleAssignment plus the (WorkstreamId, OrderIndex) index on WorkstreamStage cover this efficiently. The `Status IN (...)` filter ensures we don't show workstreams that are `Approved` or `Rebuilt` — those are terminal.
 
 ## Period-open process
 

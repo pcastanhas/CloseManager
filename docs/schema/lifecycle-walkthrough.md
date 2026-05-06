@@ -1,5 +1,21 @@
 # Workstream lifecycle walkthrough
 
+> **⚠️ Note: This walkthrough predates the multi-stage refactor.**
+>
+> The example here shows a two-stage flow (Preparer → Treasury-RE) using the
+> earlier two-role schema (`PreparerRoleId`, `ReviewerRoleId`, statuses
+> `Submitted` / `InReview`). The schema has since been generalized to support
+> N-stage chains via `WorkstreamDefStage` and `WorkstreamStage` tables.
+>
+> The conceptual flow (instantiate → prepare → review → approve, with rebuild
+> and lock-expiry branches) still reflects how the system works. The specific
+> SQL patterns need to be re-derived against the new schema. See
+> `09-workflow-templates-editor.md` and the per-stage pattern documented there
+> for the updated approach.
+>
+> This doc is kept for the conceptual walkthrough and the audit-event patterns,
+> which remain valid; the column-level SQL should not be copy-pasted as-is.
+
 This doc walks through the full happy-path lifecycle of a single workstream as a sequence of SQL operations, plus a few branch cases. It serves as both documentation and a sanity check on the schema — implementing the lifecycle in code should follow these patterns.
 
 The running example is Plaza Tower's debt service review for the October 2025 close, prepared by Maya (UserId=12) and reviewed by Erin (UserId=7, role: Treasury-RE).

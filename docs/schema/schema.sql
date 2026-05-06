@@ -123,17 +123,32 @@ CREATE TABLE WorkstreamDef (
     Code                varchar(40) NOT NULL,           -- e.g. CASH, DEBT_SVC
     Name                nvarchar(100) NOT NULL,         -- e.g. "Debt service review"
     OrderIndex          int NOT NULL,                   -- display order within template
-    PreparerRoleId      int NOT NULL REFERENCES [Role](RoleId),
-    ReviewerRoleId      int NOT NULL REFERENCES [Role](RoleId),
     Description         nvarchar(1000) NULL,
     RowVersion          rowversion NOT NULL,
     CONSTRAINT UQ_WorkstreamDef_Code UNIQUE (WorkflowTemplateId, Code)
 );
 
--- Default checklist items per workstream def.
+-- Ordered list of stages per WorkstreamDef. OrderIndex 0 is always the
+-- preparer; subsequent indexes are reviewers in chain order. Two-stage
+-- (Preparer → Reviewer) and N-stage (Preparer → A → B → C) are both
+-- naturally expressed.
+CREATE TABLE WorkstreamDefStage (
+    WorkstreamDefStageId    bigint IDENTITY PRIMARY KEY,
+    WorkstreamDefId         bigint NOT NULL REFERENCES WorkstreamDef(WorkstreamDefId),
+    OrderIndex              int NOT NULL,              -- 0 = preparer, 1+ = reviewers
+    RoleId                  int NOT NULL REFERENCES [Role](RoleId),
+    StageKind               varchar(20) NOT NULL,      -- 'Prepare' | 'Review'
+    DisplayName             nvarchar(100) NULL,        -- optional override (e.g. "Treasury sign-off")
+    RowVersion              rowversion NOT NULL,
+    CONSTRAINT UQ_WorkstreamDefStage UNIQUE (WorkstreamDefId, OrderIndex)
+);
+
+-- Default checklist items per stage of a workstream def.
+-- Note: items are scoped to a stage, not to the whole workstream.
+-- Each reviewer has their own list of verifications to perform.
 CREATE TABLE WorkstreamDefChecklistItem (
     WorkstreamDefChecklistItemId bigint IDENTITY PRIMARY KEY,
-    WorkstreamDefId     bigint NOT NULL REFERENCES WorkstreamDef(WorkstreamDefId),
+    WorkstreamDefStageId bigint NOT NULL REFERENCES WorkstreamDefStage(WorkstreamDefStageId),
     OrderIndex          int NOT NULL,
     Text                nvarchar(500) NOT NULL,
     Guidance            nvarchar(2000) NULL,            -- optional reviewer guidance
@@ -167,13 +182,12 @@ CREATE INDEX IX_ClosePeriod_Period ON ClosePeriod(Period, IsDeleted);
 -- The central object the UI revolves around.
 --
 -- Status values (enforced at the application layer):
---   NotStarted  - just instantiated, no preparer activity yet
---   InProgress  - preparer has started work (first file or checklist mark)
---   Submitted   - preparer pressed "Ready for review"
---   InReview    - reviewer has opened it (first reviewer action)
---   NeedsRevision - reviewer requested changes
---   Approved    - all checklist items approved + approve clicked
---   Rebuilt     - admin restarted; replaced by new workstream
+--   NotStarted    - just instantiated, no preparer activity yet
+--   InProgress    - actively being worked on at the current stage
+--                   (work is at stage CurrentStageIndex; lock may be held)
+--   NeedsRevision - sent back from a reviewer to an earlier stage
+--   Approved      - final stage completed
+--   Rebuilt       - admin restarted; replaced by new workstream
 CREATE TABLE Workstream (
     WorkstreamId        bigint IDENTITY PRIMARY KEY,
     ClosePeriodId       bigint NOT NULL REFERENCES ClosePeriod(ClosePeriodId),
@@ -186,24 +200,20 @@ CREATE TABLE Workstream (
     Code                varchar(40) NOT NULL,
     Name                nvarchar(100) NOT NULL,
     OrderIndex          int NOT NULL,
-    PreparerRoleId      int NOT NULL,
-    ReviewerRoleId      int NOT NULL,
 
     Status              varchar(30) NOT NULL DEFAULT 'NotStarted',
-    Round               int NOT NULL DEFAULT 1,         -- review round counter
+    Round               int NOT NULL DEFAULT 1,         -- # times stage 0 has submitted
+    CurrentStageIndex   int NOT NULL DEFAULT 0,         -- which WorkstreamStage is active
 
-    -- Single-edit lock. Anyone with the role appropriate for the current
-    -- status can acquire if no one else holds it (or theirs has expired).
+    -- Single-edit lock. Resolved against WorkstreamStage[CurrentStageIndex].RoleId
+    -- to determine which role can acquire.
     LockedByUserId      bigint NULL REFERENCES [User](UserId),
     LockedAtUtc         datetime2(3) NULL,
     LockExpiresAtUtc    datetime2(3) NULL,
 
     -- Aging / lifecycle timestamps
-    StartedAtUtc        datetime2(3) NULL,              -- first preparer action
-    SubmittedAtUtc      datetime2(3) NULL,              -- most recent submission
-    SubmittedByUserId   bigint NULL REFERENCES [User](UserId),
-    ReviewStartedAtUtc  datetime2(3) NULL,              -- first reviewer action
-    ApprovedAtUtc       datetime2(3) NULL,
+    StartedAtUtc        datetime2(3) NULL,              -- first preparer action (stage 0)
+    ApprovedAtUtc       datetime2(3) NULL,              -- final stage completion
     ApprovedByUserId    bigint NULL REFERENCES [User](UserId),
 
     -- If rebuilt by admin, points back to the predecessor for lineage
@@ -219,15 +229,45 @@ CREATE TABLE Workstream (
 );
 CREATE INDEX IX_Workstream_Status
     ON Workstream(Status, Period, IsDeleted);
-CREATE INDEX IX_Workstream_ReviewerRole
-    ON Workstream(ReviewerRoleId, Status, IsDeleted)
-    INCLUDE (EntityId, Period, SubmittedAtUtc);
-CREATE INDEX IX_Workstream_PreparerRole
-    ON Workstream(PreparerRoleId, Status, IsDeleted)
-    INCLUDE (EntityId, Period);
 CREATE INDEX IX_Workstream_LockExpiry
     ON Workstream(LockExpiresAtUtc)
     WHERE LockedByUserId IS NOT NULL;
+
+-- Stage instance: snapshot of WorkstreamDefStage at workstream instantiation.
+-- One row per stage in the chain. CurrentStageIndex on Workstream points at
+-- the OrderIndex of the active row here.
+--
+-- Per-stage timestamps and outcome live here so each stage has its own
+-- lifecycle visible in the audit trail.
+CREATE TABLE WorkstreamStage (
+    WorkstreamStageId       bigint IDENTITY PRIMARY KEY,
+    WorkstreamId            bigint NOT NULL REFERENCES Workstream(WorkstreamId),
+    SourceDefStageId        bigint NULL REFERENCES WorkstreamDefStage(WorkstreamDefStageId),
+    OrderIndex              int NOT NULL,
+    RoleId                  int NOT NULL,                -- snapshot of stage role
+    StageKind               varchar(20) NOT NULL,        -- 'Prepare' | 'Review'
+    DisplayName             nvarchar(100) NULL,
+
+    -- Per-stage lifecycle. Reset to NULL on rewind (NeedsRevision).
+    EnteredAtUtc            datetime2(3) NULL,           -- when CurrentStageIndex first reached this row
+    StartedAtUtc            datetime2(3) NULL,           -- first action at this stage in the current visit
+    StartedByUserId         bigint NULL REFERENCES [User](UserId),
+    CompletedAtUtc          datetime2(3) NULL,           -- when stage outcome was set
+    CompletedByUserId       bigint NULL REFERENCES [User](UserId),
+    Outcome                 varchar(20) NULL,            -- 'Advanced' | 'SentBack'
+    RewoundToStageIndex     int NULL,                    -- if Outcome='SentBack', which stage was the target
+
+    IsDeleted               bit NOT NULL DEFAULT 0,
+    DeletedAtUtc            datetime2(3) NULL,
+    DeletedByUserId         bigint NULL,
+    RowVersion              rowversion NOT NULL,
+    CONSTRAINT UQ_WorkstreamStage UNIQUE (WorkstreamId, OrderIndex)
+);
+CREATE INDEX IX_WorkstreamStage_Workstream
+    ON WorkstreamStage(WorkstreamId, OrderIndex, IsDeleted);
+CREATE INDEX IX_WorkstreamStage_Role
+    ON WorkstreamStage(RoleId, IsDeleted)
+    INCLUDE (WorkstreamId, OrderIndex);
 
 
 -- =============================================================================
@@ -277,25 +317,36 @@ CREATE UNIQUE INDEX UX_WorkstreamFile_SpItem
 -- =============================================================================
 -- Checklists and comments
 -- =============================================================================
--- Live checklist instance for a workstream. Items are created at
--- instantiation by cloning WorkstreamDefChecklistItem, plus reviewer- and
--- preparer-added items (where SourceDefItemId IS NULL).
+-- Live checklist instance scoped to a specific stage of a workstream. Each
+-- stage's reviewer (and the preparer, when previewing the next stage's
+-- checklist) interacts with their own list of items.
+--
+-- Items are created at workstream instantiation by cloning
+-- WorkstreamDefChecklistItem rows; reviewer- and preparer-added items
+-- have SourceDefItemId NULL.
+--
+-- The preparer (stage 0) treats the *first reviewer's* checklist (stage 1)
+-- as a prep guide: PreparerStatus is meaningful only on stage-1 items.
+-- ReviewerStatus is meaningful on all items at all stages > 0.
 
 CREATE TABLE ChecklistItem (
     ChecklistItemId     bigint IDENTITY PRIMARY KEY,
     WorkstreamId        bigint NOT NULL REFERENCES Workstream(WorkstreamId),
+    WorkstreamStageId   bigint NOT NULL REFERENCES WorkstreamStage(WorkstreamStageId),
     SourceDefItemId     bigint NULL REFERENCES WorkstreamDefChecklistItem(WorkstreamDefChecklistItemId), -- NULL if added ad hoc
     AddedByUserId       bigint NOT NULL REFERENCES [User](UserId),
     AddedAtUtc          datetime2(3) NOT NULL DEFAULT SYSUTCDATETIME(),
     OrderIndex          int NOT NULL,
     Text                nvarchar(500) NOT NULL,
 
-    -- Preparer side
+    -- Preparer prep state (used when stage 0 is previewing this stage's
+    -- checklist before submitting). Meaningful only on items belonging
+    -- to the first review stage (the one preparer submits to).
     PreparerStatus      varchar(20) NOT NULL DEFAULT 'NotReady',  -- 'NotReady' | 'Ready'
     PreparerMarkedAtUtc datetime2(3) NULL,
     PreparerMarkedByUserId bigint NULL REFERENCES [User](UserId),
 
-    -- Reviewer side
+    -- Reviewer verification state. Meaningful on all stages > 0.
     ReviewerStatus      varchar(20) NOT NULL DEFAULT 'Pending',   -- 'Pending' | 'Approved' | 'NeedsRevision'
     ReviewerMarkedAtUtc datetime2(3) NULL,
     ReviewerMarkedByUserId bigint NULL REFERENCES [User](UserId),
@@ -307,6 +358,8 @@ CREATE TABLE ChecklistItem (
 );
 CREATE INDEX IX_ChecklistItem_Workstream
     ON ChecklistItem(WorkstreamId, IsDeleted);
+CREATE INDEX IX_ChecklistItem_Stage
+    ON ChecklistItem(WorkstreamStageId, IsDeleted, OrderIndex);
 
 -- Flat comments. May belong to a checklist item OR to the workstream as a
 -- whole (when ChecklistItemId is NULL). Ordered chronologically.

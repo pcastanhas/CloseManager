@@ -10,6 +10,42 @@ The rationale: the role assignment already answers "who can work this." The lock
 
 Continuity-of-reviewer across rounds (a thing claim was meant to enforce) is not enforced by the system. It's a soft convention: the UI shows "Erin reviewed round 1" prominently, and other reviewers naturally defer unless Erin is out. If the most-recent reviewer is unavailable, anyone in the role can pick it up and proceed.
 
+## Why N-stage chains, not two roles
+
+An earlier design had `Workstream.PreparerRoleId` and `Workstream.ReviewerRoleId` — exactly two roles per workstream. This couldn't model real workflows that go Preparer → Product Manager → Senior Accountant, or Preparer → Treasury → Senior, or Preparer → Senior → CFO.
+
+The schema now uses an ordered list of stages per workstream:
+
+- `WorkstreamDefStage` defines the chain in the template (one row per stage, ordered)
+- `WorkstreamStage` is the snapshot at instantiation (one row per stage, ordered)
+- `Workstream.CurrentStageIndex` points at the active stage
+
+OrderIndex 0 is always the preparer; subsequent indices are reviewers in chain order. This naturally expresses two-stage flows (length-2 chain), three-stage flows (length-3 chain), or arbitrary lengths with no special-case code.
+
+The status enum simplifies as a result: `Submitted` and `InReview` collapse into `InProgress` plus the stage pointer. "Where in the flow is this workstream?" is answered by `CurrentStageIndex`, not by parsing distinct status values per stage.
+
+## Why checklist items are scoped to a stage
+
+Each stage in the chain verifies different things. Treasury verifies cash tie-out and bank reconciliation; Senior verifies overall reasonableness and cross-tie to financials. Forcing both to share one checklist would either make Treasury's checklist contain Senior's items (which Treasury can't know about) or make it incomplete.
+
+`ChecklistItem.WorkstreamStageId` ties each item to a specific stage. When work advances from stage 1 to stage 2, the user at stage 2 sees their own checklist; stage 1's checklist becomes historical. Reviewer-added items at stage N are scoped to stage N — a reviewer can't directly modify another stage's checklist; they can only send work back with a comment requesting a verification.
+
+The preparer (stage 0) is a special case: they see the *first reviewer's* checklist (stage 1) as a prep guide, with `PreparerStatus` ("NotReady" / "Ready") tracking their progress. `PreparerStatus` is meaningful only on items belonging to stage 1; it's ignored on later stages.
+
+## How NeedsRevision rewinds the stage chain
+
+When a reviewer at stage N sends a workstream back, they pick a target stage M < N. The rewind:
+
+- Sets `Workstream.CurrentStageIndex = M`
+- Sets `Workstream.Status = 'NeedsRevision'`
+- Marks `WorkstreamStage` rows for indices M..N as rolled-back (Outcome cleared, timestamps preserved for audit)
+- Increments `Workstream.Round` only if M = 0 (back to preparer)
+- Writes an audit event capturing the chosen target
+
+The default target is N-1 (the immediately previous stage), but the reviewer can pick stage 0 for "redo from scratch" cases. The `WorkstreamStage.RewoundToStageIndex` column captures the chosen target on the row that initiated the rewind.
+
+`Round` only counts how many times stage 0 has submitted, so a workstream bouncing between stages 1 and 2 without involving the preparer doesn't increment Round.
+
 ## Why templates are versioned
 
 Workflow templates change over time. A new SOX control might add a checklist item; an org change might re-route a workstream from Treasury to Asset Manager. If templates were mutable, in-flight closes would silently change shape, and historical audit trails would mis-represent what was actually required at the time.
@@ -20,7 +56,7 @@ The "Rebuild and restart workflow" admin action exists for the rare case where y
 
 ## Why snapshot fields on Workstream
 
-`Workstream` carries denormalized copies of `Code`, `Name`, `OrderIndex`, `PreparerRoleId`, `ReviewerRoleId` from `WorkstreamDef`. This is intentional. Even though the `WorkstreamDefId` foreign key is preserved for lineage, the snapshot freezes the definition at instantiation. Future template edits don't retroactively change historical workstreams.
+`Workstream` carries denormalized copies of `Code`, `Name`, and `OrderIndex` from `WorkstreamDef`. The role chain is snapshotted to the `WorkstreamStage` child table (one row per stage). Even though `WorkstreamDefId` and `SourceDefStageId` foreign keys are preserved for lineage, the snapshot freezes the definition at instantiation. Future template edits don't retroactively change historical workstreams.
 
 ## Why `Period` and `EntityId` are duplicated
 
