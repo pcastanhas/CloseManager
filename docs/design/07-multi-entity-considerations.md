@@ -53,7 +53,11 @@ WHERE w.IsDeleted = 0;
 
 Read access flows broadly from entity-role assignment: if you're the Preparer for Plaza Tower, you also see how the downstream review stages are progressing. Write access is gated separately by the lock-acquisition rule, which only lets you act on workstreams whose *current stage* maps to your role.
 
-To give a user CFO-level visibility across the org, assign them to a CFO role on every entity (the CFO role being one of the stages in the relevant templates). To restrict a user to ten entities, give them assignments only on those ten. The role assignment table is the access control list; there is no parallel permission system.
+To give a user CFO-level visibility across the org, define a CFO role and assign it to that user on every entity. Visibility flows from `EntityRoleAssignment` alone — the Dashboard query asks "what entities is this user assigned to?" without caring whether their role appears in any workstream's stage chain. So a CFO with role assignments but no presence in any `WorkstreamDefStage` row sees the full portfolio and never acquires a lock on anything (the lock-acquisition query joins `EntityRoleAssignment.RoleId` to `WorkstreamStage[CurrentStageIndex].RoleId`; with no stage referencing the CFO role, no match is possible). They are a pure observer by virtue of role-exists-in-assignments-but-not-in-stages, with no special "observer" mechanism needed in the schema.
+
+If a specific workstream genuinely needs the CFO as an approver, that's a separate decision: add a CFO stage to that workstream's template (or that entity's override). Two independent choices, served by two tables already in the schema — `EntityRoleAssignment` for visibility, `WorkstreamDefStage` for chain membership.
+
+To restrict a user to ten entities, give them assignments only on those ten. The role assignment table is the access control list; there is no parallel permission system.
 
 ## Work items queue queries
 
