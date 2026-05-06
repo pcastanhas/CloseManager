@@ -91,9 +91,26 @@ When expanded, each checklist item is a row with:
 
 Items added in the current draft are tinted green with an "Added in v4" sub-label. Items being deleted (when previewed) would be tinted red. The diff is part of the editor, not just the publish dialog.
 
-### Workstream codes are immutable
+### Workstream codes are editable in drafts
 
-Once a code is used in a published version, it can't be renamed. Renaming requires deleting the old workstream and adding a new one with a different code. Codes appear in SharePoint paths and audit trails, where stability is more valuable than expressiveness.
+A code (CASH, DEBT_SVC, etc.) can be renamed inside a draft. Renames are safe because:
+
+- The schema joins by `WorkstreamDefId` (FK), not by code text — existing relationships survive a rename.
+- `Workstream.Code` is a snapshot at instantiation; in-flight workstreams keep the original name regardless of what the draft changes.
+- SharePoint paths use the snapshot code, so v3 and v4 instantiations live in different folders even if the code was renamed.
+
+What changes is only what *new* instantiations look like. Once a draft is published, future codes are immutable in that published version (codes can only be edited in drafts).
+
+The diff view treats a code rename as `delete + add` rather than a true rename in v1; rename detection can come later if it becomes important.
+
+### Deletions affect only future instantiations
+
+Removing a workstream or checklist item from a draft does not affect any in-flight workstream. In-flight workstreams remain pinned to their original template version (v3) until explicitly rebuilt. Examples:
+
+- An admin deletes the OpEx workstream in v4. Open closes (Oct, Nov, Dec 2025) still have OpEx workstreams running normally — they're on v3. Jan 2026 closes (when opened on v4) will not have an OpEx workstream.
+- An admin deletes a checklist item from Property Income in v4. v3-instantiated Property Income workstreams still show all 5 original items. v4-instantiated workstreams will have 4 items.
+
+The only way to make an in-flight workstream pick up a deletion is to rebuild it via Active Workflows. Rebuild loses the in-progress work but creates a fresh workstream from the current Published template. There is no additive-only way to remove items from an in-flight workstream.
 
 ## Auto-save
 
@@ -101,17 +118,48 @@ The editor auto-saves continuously. Drafts have no audit consequence; admins sho
 
 Auto-save semantics: a debounced save (~500ms after last keystroke) for text edits; immediate save for structural changes (add, delete, reorder). The header shows a small "saved at HH:MM" indicator, replaced briefly with "saving..." during writes.
 
-## Concurrent editing
+## Single admin assumption
 
-Drafts have a soft lock similar to workstream locks but with a longer TTL (1 hour). When a second admin opens a draft another admin holds, they see "Sarah K. has been editing for 12 minutes" with options to wait or take over (which writes an audit event). Auto-save means hand-off doesn't lose work.
+This system is single-admin in v1—only one person ever edits templates. No soft locks on drafts, no presence indicators, no concurrent-edit handling. If a future iteration adds multiple admins, drafts would need a soft lock similar to workstream locks but with a longer TTL (~1 hour); not built for v1.
 
 ## Action buttons
 
 Three buttons in the editor header, in increasing destructiveness:
 
-- **Compare to v3** — opens a diff summary (additions, deletions, reorders, modifications). For v1, summary-only; side-by-side tree diff is a future enhancement.
+- **Compare to v3** — opens a side-by-side diff view (described below).
 - **Discard draft** — soft-deletes the draft. Confirmation dialog, required reason. Reversible only by restoring from soft-delete (admin action).
 - **Publish** — the heavy action. Opens the publish dialog (below).
+
+## Side-by-side compare view
+
+Renders v3 (left column) and the current draft (right column) with row-level alignment.
+
+### Alignment
+
+- Workstreams align by `Code`. Match found on both sides → both columns render. Match found only on left → right column shows "— removed in v4 —". Match found only on right → left column shows "— not in v3 —".
+- Within a matched pair of workstreams, checklist items align by exact text match; items in only one side render with a `+` (added) or `−` (removed, line-through) marker; items in both sides at different positions render with `↑`/`↓` arrows showing direction of move.
+
+### Visual encoding
+
+- Unchanged workstreams stay collapsed; both sides show just headline metadata.
+- Modified workstreams expand to show item-level diffs, both rows tinted amber.
+- Added workstreams: green tint on the right side; "— not in v3 —" placeholder on the left.
+- Removed workstreams (rare): red tint on the left; "— removed in v4 —" placeholder on the right.
+- Diff color legend at the bottom: green = added, red = removed, amber = modified or reordered, neutral = unchanged.
+
+### Diff algorithm (v1 simplification)
+
+The diff in v1 uses straightforward matching rules to keep complexity manageable:
+
+1. **Match workstreams by `Code`.** A code rename is treated as `delete + add` — no rename detection. Admins who rename a code see two changes in the diff; the summary still shows the right counts.
+2. **Match checklist items by exact text.** Any text edit is shown as `delete + add`. A typo fix on a long item appears as removal + insertion of the corrected version. Imperfect but easy to understand.
+3. **Detect reorders only on identical text.** Items present on both sides with the same text but different `OrderIndex` values render as moved (`↑` or `↓`).
+
+Refinements (fuzzy matching, true rename detection, edit-distance-based modification detection) can come later if a real admin says they need them.
+
+### Diff summary at the top
+
+The compare view's header shows the same counts the editor header shows ("+1 ws · +4 items · −1 item · ~2 reordered"). This gives the executive overview at a glance; the side-by-side gives the spatial detail.
 
 ## Publish dialog
 
@@ -186,7 +234,8 @@ To make a change to a Published version: create a new draft. The "New draft" but
 
 ## Future enhancements (not in v1)
 
-- Side-by-side or inline tree diff (rather than summary-only)
+- True rename detection in the diff (currently treated as delete + add)
+- Edit-distance-based modification detection (currently exact text match)
 - Template branching (multiple drafts from different parents)
 - Per-template-version notes / changelog beyond the single Notes field
 - Bulk "promote draft to staging" workflow if an org wants more rigorous template testing
