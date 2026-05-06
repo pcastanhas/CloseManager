@@ -64,32 +64,58 @@ The deep edit surface for a single template version. Editing is only allowed for
 ### Layout
 
 - **Header**: version number, state badge, branch info ("Branched from v3"), last edited info, action buttons
-- **Diff summary** below the header: "+1 workstream, +3 check items, −1 check item, ~2 reordered" — the executive summary of what's changed since v3
-- **Workstream list**: each workstream as a card, draggable to reorder, expandable to show its checklist items
+- **Workstream list**: each workstream as a card, draggable to reorder, expandable to show its stage chain and per-stage checklists
 - **Add workstream** affordance at the bottom
+
+The diff summary that appeared in earlier sketches is now folded into the Compare view and the Publish dialog rather than the editor header — too much information for a header that's primarily about navigating the structure.
 
 ### Workstream card
 
-Each workstream shows:
+Each workstream's collapsed view shows:
 
 - Drag handle on the left for reordering
 - Display number ("1.", "2.") computed from order
-- Display name and immutable code (CASH, DEBT_SVC, etc.)
+- Display name and immutable-after-publish code (CASH, DEBT_SVC, etc.)
 - "edited" badge if changed in this version, "new in vN" badge if newly added
-- Checklist item count
-- Routing: "Preparer → Treasury-RE"
+- **Stage chain pills**: a single line with each stage's role rendered as a pill, separated by arrows (`Preparer → Asset Mgr → Senior`). Reads in one line, scannable across the workstream list.
+- Stage count and total checklist item count
 - Expand/collapse toggle and delete button
 
-### Checklist items inside a workstream
+The stage chain pills in the header are read-only — full chain editing happens in the expanded view.
 
-When expanded, each checklist item is a row with:
+### Expanded view: two sections
 
-- Drag handle for reordering
+When a workstream is expanded, the body splits into two sections:
+
+**1. Approval chain** (top section)
+
+The ordered list of stages that work moves through. Each stage row has:
+
+- Drag handle for reordering stages
+- Stage index (0, 1, 2 — read-only)
+- Stage kind (`Prepare` for stage 0, `Review` for all others — auto-determined, not editable)
+- Role picker (dropdown of system roles)
+- Optional display name (e.g., "Treasury sign-off") that overrides the role name in the UI
+- Delete button (disabled on stage 0; preparer is required)
+
+An "Add stage" button at the bottom of the chain appends a new Review stage. New stages default to a placeholder role until the admin picks one.
+
+Stage 0 is always present, always Prepare, always required. Admins can't delete it or change its kind.
+
+**2. Default checklists by stage** (bottom section)
+
+One checklist block per reviewer stage (stages 1+). Stage 0 has no checklist of its own — the preparer uses stage 1's checklist as a prep guide at runtime.
+
+Each checklist block has a heading showing the stage index and display name (e.g., "1 · Asset review"), with the items listed indented below. Each item:
+
+- Drag handle for reordering within the stage
 - Item text (clickable to edit inline)
 - Delete button
-- Add button at the bottom
+- Add button at the bottom of each block
 
-Items added in the current draft are tinted green with an "Added in v4" sub-label. Items being deleted (when previewed) would be tinted red. The diff is part of the editor, not just the publish dialog.
+Items added in the current draft are tinted green with an "Added in v4" sub-label.
+
+The checklists stack vertically — all stages visible at once. This works because admins authoring templates think holistically about the chain. (At runtime, reviewers see only their own stage's checklist; that uses tabs, not stacking.)
 
 ### Workstream codes are editable in drafts
 
@@ -111,6 +137,12 @@ Removing a workstream or checklist item from a draft does not affect any in-flig
 - An admin deletes a checklist item from Property Income in v4. v3-instantiated Property Income workstreams still show all 5 original items. v4-instantiated workstreams will have 4 items.
 
 The only way to make an in-flight workstream pick up a deletion is to rebuild it via Active Workflows. Rebuild loses the in-progress work but creates a fresh workstream from the current Published template. There is no additive-only way to remove items from an in-flight workstream.
+
+### Stage role changes don't propagate via refresh-from-template
+
+The Active Workflows "refresh from template" operation is **additive only**: it adds new checklist items to existing stages but doesn't change the stages themselves. If a draft renames stage 1's role from "Asset Mgr" to "Senior," in-flight workstreams keep the v3 chain (Asset Mgr at stage 1) until rebuilt.
+
+This is intentional. Mid-flight role retargeting would silently change who can act on a workstream that's currently in someone's queue — bad for the people involved and bad for the audit trail. To pick up a stage role change, the workstream must be restarted (via Active Workflows → Restart workflow).
 
 ## Auto-save
 
@@ -137,7 +169,8 @@ Renders v3 (left column) and the current draft (right column) with row-level ali
 ### Alignment
 
 - Workstreams align by `Code`. Match found on both sides → both columns render. Match found only on left → right column shows "— removed in v4 —". Match found only on right → left column shows "— not in v3 —".
-- Within a matched pair of workstreams, checklist items align by exact text match; items in only one side render with a `+` (added) or `−` (removed, line-through) marker; items in both sides at different positions render with `↑`/`↓` arrows showing direction of move.
+- Within a matched pair of workstreams, **stages align by `OrderIndex`**. Stages that exist on only one side (because a stage was added or removed) render with `+` / `−` markers. A stage with the same OrderIndex but a different RoleId on each side renders as a role change (amber).
+- Within a matched pair of stages, checklist items align by exact text match; items in only one side render with a `+` (added) or `−` (removed, line-through) marker; items in both sides at different positions render with `↑`/`↓` arrows showing direction of move.
 
 ### Visual encoding
 
@@ -152,8 +185,9 @@ Renders v3 (left column) and the current draft (right column) with row-level ali
 The diff in v1 uses straightforward matching rules to keep complexity manageable:
 
 1. **Match workstreams by `Code`.** A code rename is treated as `delete + add` — no rename detection. Admins who rename a code see two changes in the diff; the summary still shows the right counts.
-2. **Match checklist items by exact text.** Any text edit is shown as `delete + add`. A typo fix on a long item appears as removal + insertion of the corrected version. Imperfect but easy to understand.
-3. **Detect reorders only on identical text.** Items present on both sides with the same text but different `OrderIndex` values render as moved (`↑` or `↓`).
+2. **Match stages by `OrderIndex` within a workstream.** Same-position stages on both sides are considered matched even if their roles differ; a role swap shows as a `~` modification, not delete+add. This matches the mental model: "the second stage of this workflow" is a stable concept; the role filling that slot can change.
+3. **Match checklist items by exact text within a stage.** Any text edit is shown as `delete + add`. A typo fix on a long item appears as removal + insertion of the corrected version. Imperfect but easy to understand.
+4. **Detect reorders only on identical text.** Items present on both sides with the same text but different `OrderIndex` values render as moved (`↑` or `↓`).
 
 Refinements (fuzzy matching, true rename detection, edit-distance-based modification detection) can come later if a real admin says they need them.
 
