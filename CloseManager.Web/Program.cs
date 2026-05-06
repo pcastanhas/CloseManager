@@ -1,5 +1,6 @@
 using CloseManager.Web.Auth;
 using CloseManager.Web.Data;
+using CloseManager.Web.Data.Services;
 using Hangfire;
 using Hangfire.SqlServer;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -65,7 +66,14 @@ try
         .AddMicrosoftIdentityConsentHandler();
 
     builder.Services.AddScoped<UserSyncService>();
+    builder.Services.AddScoped<AuditService>();
+    builder.Services.AddScoped<AppSettingService>();
+    builder.Services.AddScoped<CurrentUserService>();
     builder.Services.AddHttpContextAccessor();
+
+    // Admin group ID for role-gating
+    builder.Services.Configure<AdminOptions>(options =>
+        options.AdminGroupId = builder.Configuration["AdminGroupId"] ?? string.Empty);
 
     var app = builder.Build();
 

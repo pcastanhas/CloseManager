@@ -1,9 +1,252 @@
 @page "/settings"
 @attribute [Authorize]
+@inject AppDbContext Db
+@inject AppSettingService Settings
+@inject AuditService Audit
+@inject CurrentUserService CurrentUser
+@inject ISnackbar Snackbar
+@inject HttpClient Http
+@using CloseManager.Web.Data
+@using CloseManager.Web.Data.Entities
+@using CloseManager.Web.Data.Services
+@using Microsoft.EntityFrameworkCore
 
 <PageTitle>Settings — CloseManager</PageTitle>
 
-<MudText Typo="Typo.h6" Style="font-weight:500;" Class="mb-4">Settings</MudText>
-<MudText Typo="Typo.body2" Style="color: var(--mud-palette-text-secondary);">
-    User preferences and system settings — implemented in Phase 3.
-</MudText>
+<MudText Typo="Typo.h6" Style="font-weight:500" Class="mb-4">Settings</MudText>
+
+@* ── Personal preferences ── *@
+<MudPaper Elevation="0" Style="border:0.5px solid var(--mud-palette-divider);border-radius:4px;padding:1.25rem"
+          Class="mb-4">
+    <MudText Typo="Typo.subtitle2" Style="font-weight:500;margin-bottom:1rem">
+        Personal preferences
+    </MudText>
+
+    <div class="d-flex align-center gap-4 mb-3" style="flex-wrap:wrap">
+        <div>
+            <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary);display:block;margin-bottom:4px">
+                Theme
+            </MudText>
+            <MudButtonGroup Variant="Variant.Outlined" Size="Size.Small">
+                @foreach (var t in new[] { "System", "Light", "Dark" })
+                {
+                    <MudButton Color="@(_prefTheme == t ? Color.Primary : Color.Default)"
+                               Variant="@(_prefTheme == t ? Variant.Filled : Variant.Outlined)"
+                               OnClick="@(() => SetPref("theme", t))">@t</MudButton>
+                }
+            </MudButtonGroup>
+        </div>
+        <div>
+            <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary);display:block;margin-bottom:4px">
+                Sidebar default
+            </MudText>
+            <MudButtonGroup Variant="Variant.Outlined" Size="Size.Small">
+                @foreach (var s in new[] { "Expanded", "Collapsed" })
+                {
+                    <MudButton Color="@(_prefSidebar == s ? Color.Primary : Color.Default)"
+                               Variant="@(_prefSidebar == s ? Variant.Filled : Variant.Outlined)"
+                               OnClick="@(() => SetPref("sidebar", s))">@s</MudButton>
+                }
+            </MudButtonGroup>
+        </div>
+        <div>
+            <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary);display:block;margin-bottom:4px">
+                Display density
+            </MudText>
+            <MudButtonGroup Variant="Variant.Outlined" Size="Size.Small">
+                @foreach (var d in new[] { "Comfortable", "Compact" })
+                {
+                    <MudButton Color="@(_prefDensity == d ? Color.Primary : Color.Default)"
+                               Variant="@(_prefDensity == d ? Variant.Filled : Variant.Outlined)"
+                               OnClick="@(() => SetPref("density", d))">@d</MudButton>
+                }
+            </MudButtonGroup>
+        </div>
+    </div>
+    <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+        Preferences are saved automatically and apply on next page load.
+    </MudText>
+</MudPaper>
+
+@* ── System settings (admin only) ── *@
+@if (_isAdmin)
+{
+    <div style="margin-bottom:8px">
+        <MudText Typo="Typo.caption"
+                 Style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;
+                        color:var(--mud-palette-text-secondary);font-weight:500">
+            System settings — admin only
+        </MudText>
+    </div>
+
+    @* General group *@
+    <MudPaper Elevation="0" Style="border:0.5px solid var(--mud-palette-divider);border-radius:4px;padding:1.25rem"
+              Class="mb-3">
+        <MudText Typo="Typo.subtitle2" Style="font-weight:500;margin-bottom:1rem">General</MudText>
+
+        @foreach (var key in _generalKeys)
+        {
+            <SettingRow Setting="@_settingMap.GetValueOrDefault(key)"
+                        EditValue="@_edits.GetValueOrDefault(key, "")"
+                        OnChange="@(v => _edits[key] = v)" />
+        }
+
+        <div class="d-flex justify-end mt-3">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                       Disabled="@_saving" OnClick="@(() => SaveGroupAsync(_generalKeys))">
+                @if (_saving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
+                else { <span>Save</span> }
+            </MudButton>
+        </div>
+    </MudPaper>
+
+    @* SharePoint / Microsoft Graph group *@
+    <MudPaper Elevation="0" Style="border:0.5px solid var(--mud-palette-divider);border-radius:4px;padding:1.25rem"
+              Class="mb-3">
+        <MudText Typo="Typo.subtitle2" Style="font-weight:500;margin-bottom:1rem">
+            SharePoint / Microsoft Graph
+        </MudText>
+
+        @foreach (var key in _spKeys)
+        {
+            <SettingRow Setting="@_settingMap.GetValueOrDefault(key)"
+                        EditValue="@_edits.GetValueOrDefault(key, "")"
+                        OnChange="@(v => _edits[key] = v)" />
+        }
+
+        <div class="d-flex align-center gap-3 mt-3">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                       Disabled="@_saving" OnClick="@(() => SaveGroupAsync(_spKeys))">
+                @if (_saving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
+                else { <span>Save</span> }
+            </MudButton>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                       StartIcon="@Icons.Material.Outlined.ElectricalServices"
+                       Disabled="@(!AllSpKeysSet() || _testingConnection)"
+                       Title="@(!AllSpKeysSet() ? "Configure all SharePoint settings first" : "")"
+                       OnClick="TestSharePointAsync">
+                @if (_testingConnection) { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
+                else { <span>Test connection</span> }
+            </MudButton>
+        </div>
+
+        @if (_connectionResult is not null)
+        {
+            <MudAlert Severity="@(_connectionSuccess ? Severity.Success : Severity.Error)"
+                      Dense="true" Class="mt-3" Style="font-size:12px">
+                @_connectionResult
+            </MudAlert>
+        }
+    </MudPaper>
+}
+
+@code {
+    // ── Preference state (Phase 3: in-memory only; Phase 4+ persists to DB) ──
+    private string _prefTheme   = "System";
+    private string _prefSidebar = "Expanded";
+    private string _prefDensity = "Comfortable";
+
+    private void SetPref(string key, string value)
+    {
+        if (key == "theme")   _prefTheme   = value;
+        if (key == "sidebar") _prefSidebar = value;
+        if (key == "density") _prefDensity = value;
+        // Phase 4: persist to UserPreference table
+        Snackbar.Add("Preference saved", Severity.Success);
+    }
+
+    // ── System settings state ─────────────────────────────────────────────────
+    private bool _isAdmin;
+    private bool _saving;
+    private Dictionary<string, AppSetting> _settingMap = [];
+    private Dictionary<string, string> _edits = [];
+
+    private static readonly string[] _generalKeys =
+        ["StuckThreshold.Default", "Lock.DurationMinutes", "Period.CloseConfirmPhrase"];
+
+    private static readonly string[] _spKeys =
+        ["SharePoint.TenantId", "SharePoint.ClientId", "SharePoint.ClientSecret",
+         "SharePoint.SiteId", "SharePoint.DriveId"];
+
+    // SharePoint connection test
+    private bool _testingConnection;
+    private bool _connectionSuccess;
+    private string? _connectionResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _isAdmin = await CurrentUser.IsAdminAsync();
+
+        if (_isAdmin)
+        {
+            var all = await Settings.GetAllAsync();
+            _settingMap = all.ToDictionary(s => s.Key);
+            _edits = all.ToDictionary(s => s.Key, s => s.Value ?? string.Empty);
+        }
+    }
+
+    private async Task SaveGroupAsync(string[] keys)
+    {
+        _saving = true;
+        try
+        {
+            var actorId  = await CurrentUser.GetUserIdAsync();
+            var actorOid = await CurrentUser.GetEntraObjectIdAsync();
+
+            foreach (var key in keys)
+            {
+                if (_edits.TryGetValue(key, out var val))
+                    await Settings.SaveAsync(key, string.IsNullOrWhiteSpace(val) ? null : val,
+                                             actorId, actorOid, Audit);
+            }
+
+            // Reload to reflect saved state
+            var all = await Settings.GetAllAsync();
+            _settingMap = all.ToDictionary(s => s.Key);
+            _edits = all.ToDictionary(s => s.Key, s => s.Value ?? string.Empty);
+            _connectionResult = null;
+
+            Snackbar.Add("Settings saved", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Save failed: {ex.Message}", Severity.Error);
+        }
+        finally { _saving = false; }
+    }
+
+    private bool AllSpKeysSet()
+        => _spKeys.All(k => _settingMap.TryGetValue(k, out var s) && !string.IsNullOrWhiteSpace(s.Value));
+
+    private async Task TestSharePointAsync()
+    {
+        _testingConnection = true;
+        _connectionResult = null;
+        try
+        {
+            // Phase 6 wires in the real GraphService; for now test the token acquisition
+            var tenantId  = _settingMap.GetValueOrDefault("SharePoint.TenantId")?.Value;
+            var clientId  = _settingMap.GetValueOrDefault("SharePoint.ClientId")?.Value;
+            var siteId    = _settingMap.GetValueOrDefault("SharePoint.SiteId")?.Value;
+            var driveId   = _settingMap.GetValueOrDefault("SharePoint.DriveId")?.Value;
+
+            if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(clientId))
+            {
+                _connectionSuccess = false;
+                _connectionResult = "TenantId and ClientId must be configured first.";
+                return;
+            }
+
+            // Placeholder: real test uses GraphService.TestConnectionAsync() added in Phase 6
+            await Task.Delay(500);
+            _connectionSuccess = false;
+            _connectionResult = "SharePoint connection test not yet active — configure and save credentials, then test again in Phase 6.";
+        }
+        catch (Exception ex)
+        {
+            _connectionSuccess = false;
+            _connectionResult = $"Connection failed: {ex.Message}";
+        }
+        finally { _testingConnection = false; }
+    }
+}

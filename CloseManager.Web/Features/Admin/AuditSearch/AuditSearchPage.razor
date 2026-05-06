@@ -1,10 +1,385 @@
 @page "/admin/audit"
 @attribute [Authorize]
+@inject AppDbContext Db
+@inject AuditService Audit
+@inject CurrentUserService CurrentUser
+@inject NavigationManager Nav
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+@using CloseManager.Web.Data
+@using CloseManager.Web.Data.Entities
+@using CloseManager.Web.Data.Services
+@using Microsoft.EntityFrameworkCore
 
 <PageTitle>Audit search — CloseManager</PageTitle>
 
-<MudText Typo="Typo.caption" Style="color: var(--mud-palette-text-secondary);" Class="mb-1">Operations</MudText>
-<MudText Typo="Typo.h6" Style="font-weight:500;" Class="mb-4">Audit search</MudText>
-<MudText Typo="Typo.body2" Style="color: var(--mud-palette-text-secondary);">
-    AuditEvent search — implemented in Phase 3.
-</MudText>
+<div class="d-flex align-center justify-space-between mb-4">
+    <div>
+        <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">Operations</MudText>
+        <MudText Typo="Typo.h6" Style="font-weight:500">Audit search</MudText>
+    </div>
+    <MudButton Variant="Variant.Outlined" Size="Size.Small"
+               StartIcon="@Icons.Material.Outlined.Download"
+               OnClick="ExportCsvAsync"
+               Disabled="@(_results is null || !_results.Any())">
+        Export CSV
+    </MudButton>
+</div>
+
+<div class="d-flex gap-4" style="align-items:flex-start">
+
+    @* ── Filter panel ── *@
+    <div style="width:240px;flex-shrink:0;border:0.5px solid var(--mud-palette-divider);
+                border-radius:4px;background:white;padding:1rem;position:sticky;top:1rem">
+
+        <MudTextField Label="Search" @bind-Value="_fSearch" Immediate="true"
+                      Placeholder="Actions, notes, change details…"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3" />
+
+        <MudAutocomplete T="UserRow?" Label="Actor" @bind-Value="_fActor"
+                         SearchFunc="SearchUsersAsync" ToStringFunc="@(u => u?.DisplayName ?? "")"
+                         Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3"
+                         Clearable="true" />
+
+        <MudTextField Label="Period" @bind-Value="_fPeriod" Immediate="true"
+                      Placeholder="e.g. 202505"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3" />
+
+        <MudTextField Label="Action" @bind-Value="_fAction" Immediate="true"
+                      Placeholder="e.g. Submitted, Approved"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3" />
+
+        <MudDatePicker Label="From" @bind-Date="_fDateFrom"
+                       Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3" />
+        <MudDatePicker Label="To" @bind-Date="_fDateTo"
+                       Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3" />
+
+        <MudTextField Label="Workstream ID" @bind-Value="_fWorkstreamIdRaw" Immediate="true"
+                      Placeholder="Numeric ID"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3" />
+
+        <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="ResetFilters">
+            Reset filters
+        </MudButton>
+    </div>
+
+    @* ── Results ── *@
+    <div style="flex:1;min-width:0">
+        <div class="d-flex align-center justify-space-between mb-2">
+            <MudText Typo="Typo.body2" Style="color:var(--mud-palette-text-secondary)">
+                @if (_loading)
+                { <span>Searching…</span> }
+                else if (_results is not null)
+                { <span><strong style="color:var(--mud-palette-text-primary)">@_totalCount</strong> events matching your filters</span> }
+            </MudText>
+            <MudIconButton Icon="@(_sortDesc ? Icons.Material.Outlined.ArrowDownward : Icons.Material.Outlined.ArrowUpward)"
+                           Size="Size.Small" Title="@(_sortDesc ? "Newest first" : "Oldest first")"
+                           OnClick="@(() => { _sortDesc = !_sortDesc; _ = SearchAsync(); })" />
+        </div>
+
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else if (_results is not null && !_results.Any())
+        {
+            <MudText Typo="Typo.body2" Style="color:var(--mud-palette-text-secondary)" Class="pa-4">
+                No events match the current filters.
+            </MudText>
+        }
+        else if (_results is not null)
+        {
+            <MudTable Items="@_results" Dense="true" Hover="true" Elevation="0"
+                      Style="border:0.5px solid var(--mud-palette-divider);border-radius:4px">
+                <HeaderContent>
+                    <MudTh Style="width:130px">Timestamp</MudTh>
+                    <MudTh Style="width:120px">Actor</MudTh>
+                    <MudTh Style="width:160px">Action</MudTh>
+                    <MudTh Style="width:140px">Target</MudTh>
+                    <MudTh Style="width:100px">Context</MudTh>
+                    <MudTh>Notes</MudTh>
+                    <MudTh Style="width:30px"></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTr>
+                        <MudTd>
+                            <MudText Typo="Typo.body2" Style="font-size:11px;color:var(--mud-palette-text-secondary)">
+                                @context.OccurredAtUtc.ToString("MMM d, yyyy")<br />
+                                @context.OccurredAtUtc.ToString("HH:mm:ss") UTC
+                            </MudText>
+                        </MudTd>
+                        <MudTd>
+                            <MudLink Href="@($"/admin/users")" Style="font-size:12px">
+                                @context.ActorDisplayName
+                            </MudLink>
+                        </MudTd>
+                        <MudTd>
+                            <code style="@($"font-size:10px;padding:2px 6px;border-radius:3px;{ActionBadgeStyle(context.Action)}")">
+                                @context.Action
+                            </code>
+                        </MudTd>
+                        <MudTd>
+                            <MudText Typo="Typo.body2" Style="font-size:12px">
+                                @context.TargetTable
+                                <span style="color:var(--mud-palette-text-secondary)">#@context.TargetId</span>
+                            </MudText>
+                        </MudTd>
+                        <MudTd>
+                            <MudText Typo="Typo.body2" Style="font-size:11px;color:var(--mud-palette-text-secondary)">
+                                @context.Period
+                            </MudText>
+                        </MudTd>
+                        <MudTd>
+                            <MudText Typo="Typo.body2" Style="font-size:11px;color:var(--mud-palette-text-secondary);
+                                     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px">
+                                @(string.IsNullOrEmpty(context.Notes) ? "—" : context.Notes)
+                            </MudText>
+                        </MudTd>
+                        <MudTd>
+                            <MudIconButton Icon="@(context.IsExpanded ? Icons.Material.Outlined.ExpandLess : Icons.Material.Outlined.ChevronRight)"
+                                           Size="Size.Small"
+                                           OnClick="@(() => context.IsExpanded = !context.IsExpanded)" />
+                        </MudTd>
+                    </MudTr>
+                    @if (context.IsExpanded)
+                    {
+                        <MudTr>
+                            <MudTd colspan="7" Style="background:var(--mud-palette-background-grey);padding:12px 16px">
+                                @if (!string.IsNullOrEmpty(context.Notes))
+                                {
+                                    <MudText Typo="Typo.body2" Style="font-size:12px" Class="mb-3">
+                                        <strong>Notes:</strong> @context.Notes
+                                    </MudText>
+                                }
+                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                                    <div>
+                                        <div style="font-size:10px;font-weight:500;text-transform:uppercase;
+                                                    letter-spacing:0.05em;color:var(--mud-palette-text-secondary);margin-bottom:4px">
+                                            Before
+                                        </div>
+                                        <pre style="font-family:monospace;font-size:11px;
+                                                    color:var(--mud-palette-text-secondary);
+                                                    background:white;border:0.5px solid var(--mud-palette-divider);
+                                                    border-radius:4px;padding:8px;white-space:pre-wrap;margin:0">@(context.BeforeJson ?? "—")</pre>
+                                    </div>
+                                    <div>
+                                        <div style="font-size:10px;font-weight:500;text-transform:uppercase;
+                                                    letter-spacing:0.05em;color:var(--mud-palette-text-secondary);margin-bottom:4px">
+                                            After
+                                        </div>
+                                        <pre style="font-family:monospace;font-size:11px;
+                                                    color:var(--mud-palette-text-secondary);
+                                                    background:white;border:0.5px solid var(--mud-palette-divider);
+                                                    border-radius:4px;padding:8px;white-space:pre-wrap;margin:0">@(context.AfterJson ?? "—")</pre>
+                                    </div>
+                                </div>
+                            </MudTd>
+                        </MudTr>
+                    }
+                </RowTemplate>
+            </MudTable>
+
+            @if (_totalCount > PageSize)
+            {
+                <div class="d-flex align-center justify-space-between mt-3">
+                    <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                        Showing @((_page - 1) * PageSize + 1)–@(Math.Min(_page * PageSize, _totalCount)) of @_totalCount
+                    </MudText>
+                    <MudPagination Count="@((int)Math.Ceiling(_totalCount / (double)PageSize))"
+                                   @bind-Selected="_page" SelectedChanged="@(_ => SearchAsync())"
+                                   Size="Size.Small" />
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    class ResultRow
+    {
+        public long AuditEventId { get; set; }
+        public DateTime OccurredAtUtc { get; set; }
+        public long ActorUserId { get; set; }
+        public string ActorDisplayName { get; set; } = string.Empty;
+        public string Action { get; set; } = string.Empty;
+        public string TargetTable { get; set; } = string.Empty;
+        public long TargetId { get; set; }
+        public string? Period { get; set; }
+        public string? Notes { get; set; }
+        public string? BeforeJson { get; set; }
+        public string? AfterJson { get; set; }
+        public bool IsExpanded { get; set; }
+    }
+
+    record UserRow(long UserId, string DisplayName, string Upn);
+
+    private const int PageSize = 50;
+    private List<ResultRow>? _results;
+    private int _totalCount;
+    private bool _loading;
+    private bool _sortDesc = true;
+    private int _page = 1;
+
+    // Filters
+    private string _fSearch = string.Empty;
+    private UserRow? _fActor;
+    private string _fPeriod = string.Empty;
+    private string _fAction = string.Empty;
+    private DateTime? _fDateFrom;
+    private DateTime? _fDateTo;
+    private string _fWorkstreamIdRaw = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Pre-populate from URL query params
+        var uri = new Uri(Nav.Uri);
+        var qs = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        if (long.TryParse(qs["actorUserId"], out var uid))
+        {
+            var u = await Db.Users.Where(x => x.UserId == uid)
+                .Select(x => new UserRow(x.UserId, x.DisplayName, x.Upn))
+                .FirstOrDefaultAsync();
+            _fActor = u;
+        }
+        if (!string.IsNullOrEmpty(qs["period"])) _fPeriod = qs["period"]!;
+        if (!string.IsNullOrEmpty(qs["action"])) _fAction = qs["action"]!;
+        if (!string.IsNullOrEmpty(qs["workstreamId"])) _fWorkstreamIdRaw = qs["workstreamId"]!;
+
+        await SearchAsync();
+    }
+
+    private System.Threading.Timer? _debounce;
+
+    protected override void OnParametersSet()
+    {
+        _debounce?.Dispose();
+        _debounce = new System.Threading.Timer(_ =>
+            InvokeAsync(SearchAsync), null, 300, System.Threading.Timeout.Infinite);
+    }
+
+    private async Task SearchAsync()
+    {
+        _loading = true;
+        StateHasChanged();
+
+        long? wsId = long.TryParse(_fWorkstreamIdRaw, out var w) ? w : null;
+
+        var query = Db.AuditEvents.AsQueryable();
+
+        if (_fActor is not null)
+            query = query.Where(e => e.ActorUserId == _fActor.UserId);
+        if (!string.IsNullOrWhiteSpace(_fPeriod))
+            query = query.Where(e => e.Period == _fPeriod);
+        if (!string.IsNullOrWhiteSpace(_fAction))
+            query = query.Where(e => e.Action.Contains(_fAction));
+        if (_fDateFrom.HasValue)
+            query = query.Where(e => e.OccurredAtUtc >= _fDateFrom.Value);
+        if (_fDateTo.HasValue)
+            query = query.Where(e => e.OccurredAtUtc <= _fDateTo.Value.AddDays(1));
+        if (wsId.HasValue)
+            query = query.Where(e => e.WorkstreamId == wsId);
+        if (!string.IsNullOrWhiteSpace(_fSearch))
+            query = query.Where(e => (e.Action != null && e.Action.Contains(_fSearch))
+                                  || (e.Notes != null && e.Notes.Contains(_fSearch))
+                                  || (e.BeforeJson != null && e.BeforeJson.Contains(_fSearch))
+                                  || (e.AfterJson != null && e.AfterJson.Contains(_fSearch)));
+
+        _totalCount = await query.CountAsync();
+
+        query = _sortDesc
+            ? query.OrderByDescending(e => e.OccurredAtUtc)
+            : query.OrderBy(e => e.OccurredAtUtc);
+
+        _results = await query
+            .Skip((_page - 1) * PageSize)
+            .Take(PageSize)
+            .Select(e => new ResultRow
+            {
+                AuditEventId    = e.AuditEventId,
+                OccurredAtUtc   = e.OccurredAtUtc,
+                ActorUserId     = e.ActorUserId,
+                ActorDisplayName = e.Actor.DisplayName,
+                Action          = e.Action,
+                TargetTable     = e.TargetTable,
+                TargetId        = e.TargetId,
+                Period          = e.Period,
+                Notes           = e.Notes,
+                BeforeJson      = e.BeforeJson,
+                AfterJson       = e.AfterJson
+            })
+            .ToListAsync();
+
+        _loading = false;
+        StateHasChanged();
+    }
+
+    private async Task<IEnumerable<UserRow?>> SearchUsersAsync(string text, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return [];
+        return await Db.Users
+            .Where(u => !u.IsDeleted && (u.DisplayName.Contains(text) || u.Upn.Contains(text)))
+            .Take(10)
+            .Select(u => new UserRow(u.UserId, u.DisplayName, u.Upn))
+            .ToListAsync(ct);
+    }
+
+    private void ResetFilters()
+    {
+        _fSearch = _fPeriod = _fAction = _fWorkstreamIdRaw = string.Empty;
+        _fActor = null; _fDateFrom = _fDateTo = null;
+        _page = 1;
+        _ = SearchAsync();
+    }
+
+    private async Task ExportCsvAsync()
+    {
+        if (_results is null) return;
+
+        var actorId  = await CurrentUser.GetUserIdAsync();
+        var actorOid = await CurrentUser.GetEntraObjectIdAsync();
+
+        // Build CSV in memory
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("TimestampUtc,ActorDisplayName,ActorUserId,Action,TargetTable,TargetId,Period,Notes,BeforeJson,AfterJson");
+        foreach (var r in _results)
+        {
+            sb.AppendLine(string.Join(",",
+                CsvEsc(r.OccurredAtUtc.ToString("o")),
+                CsvEsc(r.ActorDisplayName),
+                r.ActorUserId,
+                CsvEsc(r.Action),
+                CsvEsc(r.TargetTable),
+                r.TargetId,
+                CsvEsc(r.Period ?? ""),
+                CsvEsc(r.Notes ?? ""),
+                CsvEsc(r.BeforeJson ?? ""),
+                CsvEsc(r.AfterJson ?? "")));
+        }
+
+        var bytes = System.Text.Encoding.UTF8.GetBytes(sb.ToString());
+        var base64 = Convert.ToBase64String(bytes);
+        var filename = $"audit-export-{DateTime.UtcNow:yyyyMMdd-HHmm}.csv";
+        await JS.InvokeVoidAsync("downloadBase64File", base64, filename, "text/csv");
+
+        await Audit.WriteAsync(actorId, actorOid, "AuditEvent", 0, "AuditExported",
+            notes: $"{_results.Count} events exported");
+        await Db.SaveChangesAsync();
+
+        Snackbar.Add($"Exported {_results.Count} events", Severity.Success);
+    }
+
+    private static string CsvEsc(string s)
+        => s.Contains(',') || s.Contains('"') || s.Contains('\n')
+            ? $"\"{s.Replace("\"", "\"\"")}\"" : s;
+
+    private static string ActionBadgeStyle(string action) => action switch
+    {
+        "Submitted" or "Approved" or "FinalApproved" or "StageAdvanced" or "ChecklistItemApproved"
+            => "background:rgba(24,95,165,0.1);color:#0C447C",
+        "SentBack" or "LockForceCleared" or "ChecklistRefreshedFromTemplate"
+            => "background:rgba(186,117,23,0.12);color:#633806",
+        "PeriodClosed" or "UserDeactivated" or "RoleDeactivated" or "RebuildWorkstream"
+            => "background:rgba(226,75,74,0.1);color:#791F1F",
+        _ => "background:rgba(136,135,128,0.1);color:#444441"
+    };
+}

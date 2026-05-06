@@ -1,10 +1,335 @@
 @page "/admin/roles"
 @attribute [Authorize]
+@inject AppDbContext Db
+@inject AuditService Audit
+@inject CurrentUserService CurrentUser
+@inject ISnackbar Snackbar
+@using CloseManager.Web.Data
+@using CloseManager.Web.Data.Entities
+@using CloseManager.Web.Data.Services
+@using Microsoft.EntityFrameworkCore
 
 <PageTitle>Roles — CloseManager</PageTitle>
 
-<MudText Typo="Typo.caption" Style="color: var(--mud-palette-text-secondary);" Class="mb-1">Configuration</MudText>
-<MudText Typo="Typo.h6" Style="font-weight:500;" Class="mb-4">Roles</MudText>
-<MudText Typo="Typo.body2" Style="color: var(--mud-palette-text-secondary);">
-    System-wide role definitions — implemented in Phase 3.
-</MudText>
+<div class="d-flex align-center justify-space-between mb-4">
+    <div>
+        <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">Configuration</MudText>
+        <MudText Typo="Typo.h6" Style="font-weight:500">Roles</MudText>
+    </div>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+               StartIcon="@Icons.Material.Outlined.Add"
+               OnClick="@(() => OpenModal(null))">
+        Add role
+    </MudButton>
+</div>
+
+<div class="d-flex align-center gap-3 mb-3">
+    <MudTextField @bind-Value="_search" Placeholder="Search roles…"
+                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Outlined.Search"
+                  Variant="Variant.Outlined" Margin="Margin.Dense"
+                  Style="max-width:220px" Immediate="true" />
+    <MudSwitch @bind-Value="_showInactive" Color="Color.Primary" Label="Show inactive" />
+</div>
+
+@if (_roles is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (!FilteredRoles.Any())
+{
+    <div class="d-flex flex-column align-center justify-center pa-12" style="gap:12px">
+        <MudIcon Icon="@Icons.Material.Outlined.Badge"
+                 Style="font-size:48px;color:var(--mud-palette-text-secondary)" />
+        <MudText Typo="Typo.body2" Style="color:var(--mud-palette-text-secondary)">
+            No roles defined yet. Add the first role to start setting up workflows.
+        </MudText>
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Outlined.Add"
+                   OnClick="@(() => OpenModal(null))">Add role</MudButton>
+    </div>
+}
+else
+{
+    <MudTable Items="@FilteredRoles" Dense="true" Hover="true" Elevation="0"
+              Style="border:0.5px solid var(--mud-palette-divider);border-radius:4px">
+        <HeaderContent>
+            <MudTh Style="width:140px">Code</MudTh>
+            <MudTh>Name</MudTh>
+            <MudTh Style="width:140px;text-align:right">Entities assigned</MudTh>
+            <MudTh Style="width:130px;text-align:right">Template stages</MudTh>
+            <MudTh Style="width:110px">Created</MudTh>
+            <MudTh Style="width:90px">Status</MudTh>
+            <MudTh Style="width:80px"></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTr Style="@(context.IsActive ? "" : "opacity:0.55")">
+                <MudTd>
+                    <code style="font-size:12px;color:var(--mud-palette-text-secondary)">
+                        @context.Code
+                    </code>
+                </MudTd>
+                <MudTd>@context.Name</MudTd>
+                <MudTd Style="text-align:right;padding-right:24px">
+                    @if (context.EntityCount > 0)
+                    { <MudLink Href="/admin/entities">@context.EntityCount</MudLink> }
+                    else
+                    { <span style="color:var(--mud-palette-text-disabled)">–</span> }
+                </MudTd>
+                <MudTd Style="text-align:right;padding-right:24px">
+                    @if (context.StageCount > 0)
+                    { <span>@context.StageCount</span> }
+                    else
+                    { <span style="color:var(--mud-palette-text-disabled)">–</span> }
+                </MudTd>
+                <MudTd>
+                    <MudText Typo="Typo.body2">
+                        @context.CreatedAtUtc.ToString("MMM d, yyyy")
+                    </MudText>
+                </MudTd>
+                <MudTd>
+                    <span class="@(context.IsActive ? "pill pill-success" : "pill pill-neutral")">
+                        @(context.IsActive ? "Active" : "Inactive")
+                    </span>
+                </MudTd>
+                <MudTd>
+                    <div class="d-flex gap-1">
+                        <MudIconButton Icon="@Icons.Material.Outlined.Edit"
+                                       Size="Size.Small" Title="Edit"
+                                       OnClick="@(() => OpenModal(context))" />
+                        @if (context.IsActive)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Outlined.PersonOff"
+                                           Size="Size.Small" Title="Deactivate"
+                                           OnClick="@(() => ConfirmDeactivate(context))" />
+                        }
+                        else
+                        {
+                            <MudIconButton Icon="@Icons.Material.Outlined.PersonAdd"
+                                           Size="Size.Small" Title="Reactivate"
+                                           OnClick="@(() => ReactivateAsync(context))" />
+                        }
+                    </div>
+                </MudTd>
+            </MudTr>
+        </RowTemplate>
+    </MudTable>
+}
+
+@* ── Add / Edit modal ── *@
+<MudDialog @bind-IsVisible="_modalOpen"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(_editing is null ? "Add role" : "Edit role")</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_formValid">
+
+            <MudTextField Label="Code" @bind-Value="_draftCode"
+                          Required="true" RequiredError="Code is required"
+                          Disabled="@(_editing is not null && _editing.IsInUse)"
+                          Validation="@(new Func<string, string?>(ValidateCode))"
+                          HelperText="@(_editing?.IsInUse == true
+                              ? "Locked — this role is in use by templates or assignments"
+                              : "Uppercase letters, digits, underscores only")"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-4" />
+
+            <MudTextField Label="Name" @bind-Value="_draftName"
+                          Required="true" RequiredError="Name is required"
+                          MaxLength="100"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" />
+
+        </MudForm>
+        @if (!string.IsNullOrEmpty(_modalError))
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3" Dense="true">@_modalError</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="CloseModal">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   Disabled="@_saving" OnClick="SaveAsync">
+            @if (_saving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
+            else { <span>Save</span> }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@* ── Deactivate confirmation dialog ── *@
+<MudDialog @bind-IsVisible="_deactivateOpen"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Deactivate role — @_deactivateTarget?.Name?</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2">
+            This role will no longer appear in template and assignment dropdowns.
+            Existing assignments and in-flight workstreams are not affected.
+        </MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _deactivateOpen = false)">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Error"
+                   OnClick="DeactivateAsync">Deactivate</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    record RoleRow(int RoleId, string Code, string Name, bool IsActive,
+                   DateTime CreatedAtUtc, int EntityCount, int StageCount, bool IsInUse);
+
+    private List<RoleRow>? _roles;
+    private string _search = string.Empty;
+    private bool _showInactive;
+
+    private bool _modalOpen;
+    private bool _saving;
+    private string _modalError = string.Empty;
+    private RoleRow? _editing;
+    private string _draftCode = string.Empty;
+    private string _draftName = string.Empty;
+    private MudForm _form = null!;
+    private bool _formValid;
+
+    private bool _deactivateOpen;
+    private RoleRow? _deactivateTarget;
+
+    private IEnumerable<RoleRow> FilteredRoles => (_roles ?? [])
+        .Where(r => (_showInactive || r.IsActive)
+                 && (string.IsNullOrWhiteSpace(_search)
+                     || r.Code.Contains(_search, StringComparison.OrdinalIgnoreCase)
+                     || r.Name.Contains(_search, StringComparison.OrdinalIgnoreCase)));
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        var currentTemplateDefIds = Db.WorkstreamDefs
+            .Where(d => d.WorkflowTemplate.IsCurrent && !d.WorkflowTemplate.IsDeleted)
+            .Select(d => d.WorkstreamDefId);
+
+        _roles = await Db.Roles
+            .Where(r => !r.IsDeleted)
+            .Select(r => new RoleRow(
+                r.RoleId,
+                r.Code,
+                r.Name,
+                r.IsActive,
+                r.CreatedAtUtc,
+                Db.EntityRoleAssignments.Count(a => a.RoleId == r.RoleId && !a.IsDeleted),
+                Db.WorkstreamDefStages.Count(s => s.RoleId == r.RoleId
+                    && currentTemplateDefIds.Contains(s.WorkstreamDefId)),
+                Db.EntityRoleAssignments.Any(a => a.RoleId == r.RoleId && !a.IsDeleted)
+                    || Db.WorkstreamDefStages.Any(s => s.RoleId == r.RoleId)
+            ))
+            .OrderBy(r => r.Code)
+            .ToListAsync();
+    }
+
+    private void OpenModal(RoleRow? role)
+    {
+        _editing = role;
+        _draftCode = role?.Code ?? string.Empty;
+        _draftName = role?.Name ?? string.Empty;
+        _modalError = string.Empty;
+        _modalOpen = true;
+    }
+
+    private void CloseModal() { _modalOpen = false; _editing = null; }
+
+    private string? ValidateCode(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "Code is required";
+        if (!System.Text.RegularExpressions.Regex.IsMatch(value, @"^[A-Z0-9_]+$"))
+            return "Uppercase letters, digits and underscores only";
+        if (value.Length > 40) return "Max 40 characters";
+        return null;
+    }
+
+    private async Task SaveAsync()
+    {
+        await _form.Validate();
+        if (!_formValid) return;
+
+        _saving = true;
+        _modalError = string.Empty;
+        try
+        {
+            var actorId  = await CurrentUser.GetUserIdAsync();
+            var actorOid = await CurrentUser.GetEntraObjectIdAsync();
+
+            if (_editing is null)
+            {
+                if (await Db.Roles.AnyAsync(r => r.Code == _draftCode && !r.IsDeleted))
+                { _modalError = "Code already in use"; return; }
+
+                var role = new Role { Code = _draftCode, Name = _draftName,
+                                      IsActive = true, CreatedAtUtc = DateTime.UtcNow };
+                Db.Roles.Add(role);
+                await Db.SaveChangesAsync();
+                await Audit.WriteAsync(actorId, actorOid, "Role", role.RoleId, "RoleCreated",
+                    after: new { role.Code, role.Name });
+                await Db.SaveChangesAsync();
+                Snackbar.Add($"Role '{role.Name}' created", Severity.Success);
+            }
+            else
+            {
+                var role = await Db.Roles.SingleAsync(r => r.RoleId == _editing.RoleId);
+                var before = new { role.Code, role.Name };
+
+                if (!_editing.IsInUse && role.Code != _draftCode)
+                {
+                    if (await Db.Roles.AnyAsync(r => r.Code == _draftCode && !r.IsDeleted && r.RoleId != role.RoleId))
+                    { _modalError = "Code already in use"; return; }
+                    role.Code = _draftCode;
+                }
+
+                role.Name = _draftName;
+                var action = before.Name != _draftName || before.Code != _draftCode
+                    ? "RoleRenamed" : "RoleUpdated";
+                await Audit.WriteAsync(actorId, actorOid, "Role", role.RoleId, action,
+                    before: before, after: new { role.Code, role.Name });
+                await Db.SaveChangesAsync();
+                Snackbar.Add($"Role '{role.Name}' updated", Severity.Success);
+            }
+
+            CloseModal();
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _modalError = $"Save failed: {ex.Message}";
+        }
+        finally { _saving = false; }
+    }
+
+    private void ConfirmDeactivate(RoleRow role)
+    {
+        _deactivateTarget = role;
+        _deactivateOpen = true;
+    }
+
+    private async Task DeactivateAsync()
+    {
+        if (_deactivateTarget is null) return;
+        var actorId  = await CurrentUser.GetUserIdAsync();
+        var actorOid = await CurrentUser.GetEntraObjectIdAsync();
+        var role = await Db.Roles.SingleAsync(r => r.RoleId == _deactivateTarget.RoleId);
+        role.IsActive = false;
+        await Audit.WriteAsync(actorId, actorOid, "Role", role.RoleId, "RoleDeactivated");
+        await Db.SaveChangesAsync();
+        _deactivateOpen = false;
+        Snackbar.Add($"Role '{role.Name}' deactivated", Severity.Info);
+        await LoadAsync();
+    }
+
+    private async Task ReactivateAsync(RoleRow row)
+    {
+        var actorId  = await CurrentUser.GetUserIdAsync();
+        var actorOid = await CurrentUser.GetEntraObjectIdAsync();
+        var role = await Db.Roles.SingleAsync(r => r.RoleId == row.RoleId);
+        role.IsActive = true;
+        await Audit.WriteAsync(actorId, actorOid, "Role", role.RoleId, "RoleReactivated");
+        await Db.SaveChangesAsync();
+        Snackbar.Add($"Role '{role.Name}' reactivated", Severity.Success);
+        await LoadAsync();
+    }
+}

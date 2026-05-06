@@ -1,10 +1,435 @@
 @page "/admin/users"
 @attribute [Authorize]
+@inject AppDbContext Db
+@inject AuditService Audit
+@inject CurrentUserService CurrentUser
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+@using CloseManager.Web.Data
+@using CloseManager.Web.Data.Entities
+@using CloseManager.Web.Data.Services
+@using Microsoft.EntityFrameworkCore
 
 <PageTitle>Users — CloseManager</PageTitle>
 
-<MudText Typo="Typo.caption" Style="color: var(--mud-palette-text-secondary);" Class="mb-1">Configuration</MudText>
-<MudText Typo="Typo.h6" Style="font-weight:500;" Class="mb-4">Users</MudText>
-<MudText Typo="Typo.body2" Style="color: var(--mud-palette-text-secondary);">
-    User management — implemented in Phase 3.
-</MudText>
+<div class="d-flex align-center justify-space-between mb-4">
+    <div>
+        <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">Configuration</MudText>
+        <MudText Typo="Typo.h6" Style="font-weight:500">Users</MudText>
+    </div>
+</div>
+
+<div class="d-flex align-center gap-3 mb-3" style="flex-wrap:wrap">
+    <MudTextField @bind-Value="_search" Placeholder="Search name or email…"
+                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Outlined.Search"
+                  Variant="Variant.Outlined" Margin="Margin.Dense"
+                  Style="max-width:220px" Immediate="true" />
+    <MudChip T="string" Color="@(_filterActive ? Color.Primary : Color.Default)"
+             Variant="@(_filterActive ? Variant.Filled : Variant.Outlined)"
+             OnClick="@(() => _filterActive = !_filterActive)">Active</MudChip>
+    <MudChip T="string" Color="@(_filterInactive ? Color.Primary : Color.Default)"
+             Variant="@(_filterInactive ? Variant.Filled : Variant.Outlined)"
+             OnClick="@(() => _filterInactive = !_filterInactive)">Inactive</MudChip>
+    <MudChip T="string" Color="@(_filterNeverSeen ? Color.Primary : Color.Default)"
+             Variant="@(_filterNeverSeen ? Variant.Filled : Variant.Outlined)"
+             OnClick="@(() => _filterNeverSeen = !_filterNeverSeen)">Never signed in</MudChip>
+</div>
+
+<div class="d-flex gap-4" style="align-items:flex-start">
+
+    @* ── Table ── *@
+    <div style="flex:1;min-width:0">
+        @if (_users is null)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else
+        {
+            <MudTable Items="@FilteredUsers" Dense="true" Hover="true" Elevation="0"
+                      RowClassFunc="@((row, _) => row.UserId == _selectedUser?.UserId ? "mud-selected-item" : "")"
+                      Style="border:0.5px solid var(--mud-palette-divider);border-radius:4px">
+                <HeaderContent>
+                    <MudTh>Name</MudTh>
+                    <MudTh Style="width:80px;text-align:right">Entities</MudTh>
+                    <MudTh Style="width:130px">Last seen</MudTh>
+                    <MudTh Style="width:70px">Status</MudTh>
+                    <MudTh Style="width:80px"></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTr Style="@(context.IsActive ? "" : "opacity:0.55")"
+                           @onclick="@(() => SelectUser(context))" style="cursor:pointer">
+                        <MudTd>
+                            <div style="display:flex;align-items:center;gap:10px">
+                                <MudAvatar Style="width:30px;height:30px;font-size:11px;
+                                                  background:var(--mud-palette-primary);color:white;flex-shrink:0">
+                                    @GetInitials(context.DisplayName)
+                                </MudAvatar>
+                                <div>
+                                    <div style="font-size:13px;font-weight:500;display:flex;align-items:center;gap:6px">
+                                        @context.DisplayName
+                                        @if (context.IsAdmin)
+                                        {
+                                            <MudChip T="string" Size="Size.Small" Color="Color.Info"
+                                                     Variant="Variant.Outlined"
+                                                     Style="height:18px;font-size:10px;padding:0 6px">
+                                                Admin
+                                            </MudChip>
+                                        }
+                                    </div>
+                                    <div style="font-size:11px;color:var(--mud-palette-text-secondary)">
+                                        @context.Upn
+                                    </div>
+                                </div>
+                            </div>
+                        </MudTd>
+                        <MudTd Style="text-align:right;padding-right:20px">
+                            @if (context.EntityCount > 0)
+                            { <MudText Typo="Typo.body2">@context.EntityCount</MudText> }
+                            else
+                            { <span style="color:var(--mud-palette-text-disabled)">–</span> }
+                        </MudTd>
+                        <MudTd>
+                            <MudTooltip Text="@(context.LastSeenUtc?.ToString("yyyy-MM-dd HH:mm UTC") ?? "Never")">
+                                <MudText Typo="Typo.body2" Style="font-size:12px">
+                                    @FormatLastSeen(context.LastSeenUtc)
+                                </MudText>
+                            </MudTooltip>
+                        </MudTd>
+                        <MudTd>
+                            <span class="@(context.IsActive ? "pill pill-success" : "pill pill-neutral")">
+                                @(context.IsActive ? "Active" : "Inactive")
+                            </span>
+                        </MudTd>
+                        <MudTd>
+                            <div class="d-flex gap-1">
+                                <MudIconButton Icon="@Icons.Material.Outlined.OpenInNew"
+                                               Size="Size.Small" Title="View assignments"
+                                               OnClick="@(() => SelectUser(context))" />
+                                @if (context.IsActive)
+                                {
+                                    <MudIconButton Icon="@Icons.Material.Outlined.PersonOff"
+                                                   Size="Size.Small" Title="Deactivate"
+                                                   OnClick="@(() => ConfirmDeactivate(context))" />
+                                }
+                                else
+                                {
+                                    <MudIconButton Icon="@Icons.Material.Outlined.PersonAdd"
+                                                   Size="Size.Small" Title="Reactivate"
+                                                   OnClick="@(() => ReactivateAsync(context))" />
+                                }
+                            </div>
+                        </MudTd>
+                    </MudTr>
+                </RowTemplate>
+            </MudTable>
+        }
+    </div>
+
+    @* ── Detail panel ── *@
+    @if (_selectedUser is not null)
+    {
+        <div style="width:380px;flex-shrink:0;border:0.5px solid var(--mud-palette-divider);
+                    border-radius:4px;background:white;padding:1rem;position:sticky;top:1rem">
+
+            <div class="d-flex align-center gap-3 mb-4"
+                 style="padding-bottom:1rem;border-bottom:0.5px solid var(--mud-palette-divider)">
+                <MudAvatar Style="width:40px;height:40px;font-size:14px;
+                                  background:var(--mud-palette-primary);color:white">
+                    @GetInitials(_selectedUser.DisplayName)
+                </MudAvatar>
+                <div style="flex:1;min-width:0">
+                    <div style="font-weight:500;font-size:14px">@_selectedUser.DisplayName</div>
+                    <div style="font-size:12px;color:var(--mud-palette-text-secondary)">
+                        @_selectedUser.Upn
+                    </div>
+                </div>
+                <MudIconButton Icon="@Icons.Material.Outlined.Close" Size="Size.Small"
+                               OnClick="@(() => _selectedUser = null)" />
+            </div>
+
+            @* Entity assignments *@
+            <div style="font-size:10px;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;
+                        color:var(--mud-palette-text-secondary);margin-bottom:8px">
+                Entity assignments
+            </div>
+            @if (!_assignments.Any())
+            {
+                <MudText Typo="Typo.body2" Style="color:var(--mud-palette-text-secondary);font-size:12px">
+                    No entity assignments. Assign roles on the Entities page.
+                </MudText>
+            }
+            else
+            {
+                @foreach (var grp in _assignments.GroupBy(a => a.EntityId))
+                {
+                    var first = grp.First();
+                    <div class="mb-3">
+                        <div style="font-size:13px;font-weight:500">
+                            @first.EntityName
+                            <code style="font-size:11px;color:var(--mud-palette-text-secondary);margin-left:4px">
+                                @first.EntityCode
+                            </code>
+                        </div>
+                        @foreach (var a in grp)
+                        {
+                            <div style="display:flex;justify-content:space-between;align-items:center;
+                                        font-size:12px;color:var(--mud-palette-text-secondary);padding:2px 0">
+                                <span>@a.RoleName</span>
+                                <code style="font-size:11px;background:var(--mud-palette-background-grey);
+                                             padding:1px 5px;border-radius:3px">@a.RoleCode</code>
+                            </div>
+                        }
+                    </div>
+                }
+                <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                    Manage assignments on the Entities page.
+                </MudText>
+            }
+
+            @* Recent activity *@
+            <div style="font-size:10px;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;
+                        color:var(--mud-palette-text-secondary);margin:1rem 0 8px">
+                Recent activity
+            </div>
+            @if (!_recentActivity.Any())
+            {
+                <MudText Typo="Typo.body2" Style="color:var(--mud-palette-text-secondary);font-size:12px">
+                    No recorded activity yet.
+                </MudText>
+            }
+            else
+            {
+                @foreach (var evt in _recentActivity)
+                {
+                    <div style="display:flex;align-items:baseline;gap:8px;padding:4px 0;
+                                border-bottom:0.5px solid var(--mud-palette-divider);font-size:12px">
+                        <code style="font-size:10px;background:var(--mud-palette-background-grey);
+                                     padding:1px 5px;border-radius:3px;white-space:nowrap">
+                            @evt.Action
+                        </code>
+                        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+                                     color:var(--mud-palette-text-secondary)">
+                            @evt.TargetTable #@evt.TargetId
+                        </span>
+                        <span style="font-size:11px;color:var(--mud-palette-text-disabled);white-space:nowrap">
+                            @FormatRelative(evt.OccurredAtUtc)
+                        </span>
+                    </div>
+                }
+                <MudLink Href="@($"/admin/audit?actorUserId={_selectedUser.UserId}")"
+                         Style="font-size:12px;display:block;margin-top:8px">
+                    See full history →
+                </MudLink>
+            }
+
+            @* Warnings *@
+            @if (_soleRoleWarning is not null)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-3" Style="font-size:12px">
+                    @_soleRoleWarning
+                </MudAlert>
+            }
+
+            @* Panel actions *@
+            <div style="display:flex;gap:8px;margin-top:1rem;padding-top:1rem;
+                        border-top:0.5px solid var(--mud-palette-divider)">
+                @if (_selectedUser.IsActive)
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small"
+                               StartIcon="@Icons.Material.Outlined.PersonOff"
+                               OnClick="@(() => ConfirmDeactivate(_selectedUser))">
+                        Deactivate
+                    </MudButton>
+                }
+                else
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small"
+                               OnClick="@(() => ReactivateAsync(_selectedUser))">
+                        Reactivate
+                    </MudButton>
+                }
+                <MudButton Variant="Variant.Text" Size="Size.Small"
+                           OnClick="@(() => _selectedUser = null)">Close</MudButton>
+            </div>
+        </div>
+    }
+</div>
+
+@* ── Deactivate dialog ── *@
+<MudDialog @bind-IsVisible="_deactivateOpen"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Deactivate user — @_deactivateTarget?.DisplayName?</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-2">
+            <strong>@_deactivateTarget?.DisplayName</strong> holds
+            @_deactivateTarget?.EntityCount entity-role assignment(s). They will lose access
+            to the system on next page load. Their historical audit trail is preserved.
+        </MudText>
+        <MudText Typo="Typo.body2" Style="color:var(--mud-palette-text-secondary)">
+            Their entity assignments are not removed. To remove assignments, use the Entities page.
+        </MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _deactivateOpen = false)">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Error"
+                   OnClick="DeactivateAsync">Deactivate</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    record UserRow(long UserId, string DisplayName, string Upn, bool IsActive,
+                   bool IsAdmin, DateTime? LastSeenUtc, int EntityCount);
+    record AssignmentRow(long EntityId, string EntityName, string EntityCode,
+                         string RoleName, string RoleCode, DateTime AssignedAtUtc);
+    record ActivityRow(string Action, string TargetTable, long TargetId, DateTime OccurredAtUtc);
+
+    private List<UserRow>? _users;
+    private string _search = string.Empty;
+    private bool _filterActive = true;
+    private bool _filterInactive;
+    private bool _filterNeverSeen;
+
+    private UserRow? _selectedUser;
+    private List<AssignmentRow> _assignments = [];
+    private List<ActivityRow> _recentActivity = [];
+    private string? _soleRoleWarning;
+
+    private bool _deactivateOpen;
+    private UserRow? _deactivateTarget;
+
+    // Admin group ID passed down from config — resolved in Phase 3 via IOptions
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    private IEnumerable<UserRow> FilteredUsers => (_users ?? [])
+        .Where(u =>
+            ((_filterActive && u.IsActive) || (_filterInactive && !u.IsActive) || (!_filterActive && !_filterInactive))
+            && (!_filterNeverSeen || u.LastSeenUtc is null)
+            && (string.IsNullOrWhiteSpace(_search)
+                || u.DisplayName.Contains(_search, StringComparison.OrdinalIgnoreCase)
+                || u.Upn.Contains(_search, StringComparison.OrdinalIgnoreCase)));
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        // Admin detection: we store whether a user is admin by checking if their
+        // Entra OID matches anyone in the admin group. Since we don't store IsAdmin
+        // in the DB, we look it up from the current user's perspective.
+        // For the table we show admin badge only for the currently signed-in user if admin.
+        var currentOid = await CurrentUser.GetEntraObjectIdAsync();
+        var currentIsAdmin = await CurrentUser.IsAdminAsync();
+
+        _users = await Db.Users
+            .Where(u => !u.IsDeleted)
+            .OrderBy(u => u.DisplayName)
+            .Select(u => new UserRow(
+                u.UserId,
+                u.DisplayName,
+                u.Upn,
+                u.IsActive,
+                u.EntraObjectId == currentOid && currentIsAdmin, // admin badge for self only in Phase 3
+                u.LastSeenUtc,
+                Db.EntityRoleAssignments.Count(a => a.UserId == u.UserId && !a.IsDeleted)
+            ))
+            .ToListAsync();
+    }
+
+    private async Task SelectUser(UserRow user)
+    {
+        _selectedUser = user;
+        _soleRoleWarning = null;
+
+        _assignments = await Db.EntityRoleAssignments
+            .Where(a => a.UserId == user.UserId && !a.IsDeleted)
+            .Select(a => new AssignmentRow(
+                a.EntityId, a.Entity.Name, a.Entity.Code,
+                a.Role.Name, a.Role.Code, a.AssignedAtUtc))
+            .OrderBy(a => a.EntityName).ThenBy(a => a.RoleName)
+            .ToListAsync();
+
+        _recentActivity = await Db.AuditEvents
+            .Where(e => e.ActorUserId == user.UserId)
+            .OrderByDescending(e => e.OccurredAtUtc)
+            .Take(10)
+            .Select(e => new ActivityRow(e.Action, e.TargetTable, e.TargetId, e.OccurredAtUtc))
+            .ToListAsync();
+
+        // Check for sole-holder warning
+        var soleRoleCount = await Db.EntityRoleAssignments
+            .Where(a => a.UserId == user.UserId && !a.IsDeleted)
+            .CountAsync(a => !Db.EntityRoleAssignments.Any(b =>
+                b.EntityId == a.EntityId && b.RoleId == a.RoleId &&
+                b.UserId != user.UserId && !b.IsDeleted));
+
+        if (soleRoleCount > 0)
+            _soleRoleWarning = $"{user.DisplayName} is the only person assigned to their role on {soleRoleCount} " +
+                               $"entit{(soleRoleCount == 1 ? "y" : "ies")}. " +
+                               "Deactivating will leave those workstreams unstaffed.";
+    }
+
+    private void ConfirmDeactivate(UserRow user)
+    {
+        _deactivateTarget = user;
+        _deactivateOpen = true;
+    }
+
+    private async Task DeactivateAsync()
+    {
+        if (_deactivateTarget is null) return;
+        var actorId  = await CurrentUser.GetUserIdAsync();
+        var actorOid = await CurrentUser.GetEntraObjectIdAsync();
+        var user = await Db.Users.SingleAsync(u => u.UserId == _deactivateTarget.UserId);
+        user.IsActive = false;
+        await Audit.WriteAsync(actorId, actorOid, "User", user.UserId, "UserDeactivated",
+            after: new { IsActive = false });
+        await Db.SaveChangesAsync();
+        _deactivateOpen = false;
+        _selectedUser = null;
+        Snackbar.Add($"{user.DisplayName} deactivated", Severity.Info);
+        await LoadAsync();
+    }
+
+    private async Task ReactivateAsync(UserRow row)
+    {
+        var actorId  = await CurrentUser.GetUserIdAsync();
+        var actorOid = await CurrentUser.GetEntraObjectIdAsync();
+        var user = await Db.Users.SingleAsync(u => u.UserId == row.UserId);
+        user.IsActive = true;
+        await Audit.WriteAsync(actorId, actorOid, "User", user.UserId, "UserReactivated",
+            after: new { IsActive = true });
+        await Db.SaveChangesAsync();
+        Snackbar.Add($"{user.DisplayName} reactivated", Severity.Success);
+        await LoadAsync();
+        if (_selectedUser?.UserId == row.UserId)
+            await SelectUser(_users!.Single(u => u.UserId == row.UserId));
+    }
+
+    private static string GetInitials(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2
+            ? $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant()
+            : name.Length >= 2 ? name[..2].ToUpperInvariant() : name.ToUpperInvariant();
+    }
+
+    private static string FormatLastSeen(DateTime? dt)
+    {
+        if (dt is null) return "Never";
+        var diff = DateTime.UtcNow - dt.Value;
+        if (diff.TotalMinutes < 60)  return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalHours < 24)    return $"{(int)diff.TotalHours}h ago";
+        if (diff.TotalDays < 7)      return $"{(int)diff.TotalDays}d ago";
+        return dt.Value.ToString("MMM d, yyyy");
+    }
+
+    private static string FormatRelative(DateTime dt)
+    {
+        var diff = DateTime.UtcNow - dt;
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalHours < 24)   return $"{(int)diff.TotalHours}h ago";
+        if (diff.TotalDays < 30)    return $"{(int)diff.TotalDays}d ago";
+        return dt.ToString("MMM d");
+    }
+}

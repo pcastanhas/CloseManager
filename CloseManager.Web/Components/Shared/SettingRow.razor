@@ -1,0 +1,49 @@
+@using CloseManager.Web.Data.Entities
+
+<div class="mb-4">
+    <div class="d-flex align-center gap-2 mb-1">
+        <code style="font-size:11px;color:var(--mud-palette-text-secondary)">@Setting?.Key</code>
+    </div>
+    @if (!string.IsNullOrEmpty(Setting?.Description))
+    {
+        <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary);display:block;margin-bottom:4px">
+            @Setting.Description
+        </MudText>
+    }
+    <div class="d-flex align-center gap-2">
+        @if (Setting?.IsSecret == true)
+        {
+            <MudTextField Value="@EditValue"
+                          ValueChanged="@OnChange"
+                          InputType="@(_showSecret ? InputType.Text : InputType.Password)"
+                          Placeholder="Not configured"
+                          Variant="Variant.Outlined" Margin="Margin.Dense"
+                          Style="flex:1"
+                          Adornment="Adornment.End"
+                          AdornmentIcon="@(_showSecret ? Icons.Material.Outlined.VisibilityOff : Icons.Material.Outlined.Visibility)"
+                          OnAdornmentClick="@(() => _showSecret = !_showSecret)" />
+        }
+        else
+        {
+            <MudTextField Value="@EditValue"
+                          ValueChanged="@OnChange"
+                          Placeholder="Not configured"
+                          Variant="Variant.Outlined" Margin="Margin.Dense"
+                          Style="flex:1" />
+        }
+        @if (Setting?.UpdatedAtUtc != default && Setting?.UpdatedByUserId is not null)
+        {
+            <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-disabled);white-space:nowrap">
+                Updated @Setting.UpdatedAtUtc.ToString("MMM d")
+            </MudText>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AppSetting? Setting { get; set; }
+    [Parameter, EditorRequired] public string EditValue { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public EventCallback<string> OnChange { get; set; }
+
+    private bool _showSecret;
+}
