@@ -62,7 +62,7 @@ Jobs likely needed later:
 
 ## Database access pattern
 
-EF Core for most things — straightforward CRUD against the schema. Hot-path queries (heatmap, reviewer queue) drop down to raw SQL or Dapper for speed. Don't enforce one or the other globally; pick per-query.
+EF Core for most things — straightforward CRUD against the schema. Hot-path queries (the Dashboard portfolio grid, reviewer queue) drop down to raw SQL or Dapper for speed. Don't enforce one or the other globally; pick per-query.
 
 Migrations: EF Core migrations checked into source control, applied via deployment pipeline. Never apply migrations manually in any environment.
 

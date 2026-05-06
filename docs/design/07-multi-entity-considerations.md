@@ -65,9 +65,7 @@ This is ~100 entities × 5-7 workstreams × 6-10 checklist items = ~3000-7000 ro
 
 ## Heterogeneous portfolio view
 
-The portfolio view renders rows grouped by entity type, with each section having its own column structure. Real Estate Assets section has columns for Cash / Property Income / OpEx / Debt Service / Financials. Investment Funds section has columns for Cash / Valuations / Capital Activity / Mgmt Fees / Financials. Same component, different column sets.
-
-After feedback this was further simplified: the columns themselves are dropped, and each row shows its workstreams as tiles in their natural order. See `01-portfolio-view.md` for the detail.
+The portfolio view renders rows grouped by entity type. Each row's workstreams are rendered as tiles in their natural order, with status color, name, and current reviewer baked into the tile. There are no fixed columns: each entity row owns its own workstream sequence. See `01-portfolio-view.md` for the detail.
 
 ## Things deliberately not in v1
 

@@ -8,8 +8,8 @@ Three logical groups, separated by dividers:
 
 ### Your work (all users)
 
-- **Dashboard** — landing page; for staff accountants this is their entity grid; for managers this is the portfolio view
-- **Work items** — the user's queue of items needing their attention (preparing or reviewing). Shows a red badge with count when work is waiting.
+- **Dashboard** — the user's landing page. Renders the portfolio view: a multi-entity grid showing the state of every entity-close the user can see. Staff accountants see only their 8-12 assigned entities; managers and CFOs see the full portfolio. Same component, different scope. See `01-portfolio-view.md` for detail.
+- **Work items** — the user's queue of individual workstreams needing their attention (preparing or reviewing). Shows a red badge with count when work is waiting. Distinct from Dashboard: Dashboard is entity-close status; Work items is workstream-level tasks.
 - **My history** — a personal audit trail; what the user has worked on, including past closes
 
 ### Configuration (admin only)
@@ -42,7 +42,7 @@ Each nav item maps to a URL pattern. The active state in the sidebar is computed
 
 URLs follow this convention:
 
-- `/` — dashboard
+- `/` — Dashboard (renders portfolio view)
 - `/work` — work items
 - `/work/{workstreamId}` — single workstream (preparer or reviewer view, depending on user role and workstream state)
 - `/history` — my history

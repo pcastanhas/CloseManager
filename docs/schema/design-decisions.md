@@ -24,7 +24,7 @@ The "Rebuild and restart workflow" admin action exists for the rare case where y
 
 ## Why `Period` and `EntityId` are duplicated
 
-Both are reachable through `ClosePeriod` joins, but they're the most common query filters in the system (the heatmap, the reviewer queue, the per-entity drill-down). The denormalization keeps queries fast and easy to read. The trade-off is that the application layer must keep them consistent on insert; this is enforced in the workstream-instantiation procedure.
+Both are reachable through `ClosePeriod` joins, but they're the most common query filters in the system (the Dashboard portfolio grid, the reviewer queue, the per-entity drill-down). The denormalization keeps queries fast and easy to read. The trade-off is that the application layer must keep them consistent on insert; this is enforced in the workstream-instantiation procedure.
 
 ## Why explicit `Status` plus an audit log
 

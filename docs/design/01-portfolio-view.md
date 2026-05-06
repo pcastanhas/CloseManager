@@ -1,6 +1,19 @@
 # Portfolio view
 
-The portfolio view is the answer to the question "across all entity-closes, where are the bottlenecks?" It's the primary surface for managers and senior accountants. For staff accountants, it's secondary — they spend most of their time in their own work-items view.
+The portfolio view is the answer to the question "across all entity-closes, where are the bottlenecks?" It is rendered as the **Dashboard** for users who have manager- or CFO-level permission to see the full close.
+
+## Terminology
+
+A few terms have been used interchangeably during design and are worth pinning down:
+
+- **Dashboard** — the sidebar item and the route (`/`). Always the user's landing page. Content varies by role: staff accountants see only their assigned entities; managers and CFOs see the full portfolio view described in this document.
+- **Portfolio view** — the multi-entity grid described here. It is the *content* rendered on the Dashboard for users with cross-portfolio permission.
+- **Heatmap** — earlier informal term for this view. Avoid it going forward; the design isn't a fixed-cell heatmap anymore (see below).
+- **Work items** — a separate sidebar item. The queue of items waiting on the current user specifically. Different from Dashboard: the Dashboard shows entity-close status; Work items shows individual workstream-level tasks.
+
+## The job to be done
+
+The portfolio view answers "across all entity-closes, where are the bottlenecks?" It is the primary surface for managers and senior accountants. For staff accountants, the same Dashboard route renders a smaller version scoped to their own 8-12 entities — same component, fewer rows.
 
 ## The wrong design we considered first
 
@@ -44,6 +57,6 @@ The override mechanism is captured in the schema as additional rows in the entit
 
 ## Reviewer load panel
 
-The portfolio view includes a "Reviewer load right now" panel at the bottom showing per-role queue depth and average aging. This makes the implicit signal in the heatmap (lots of amber Cash cells = Treasury bottleneck) into an explicit one. Critical when a single reviewer covers many entities.
+The portfolio view includes a "Reviewer load right now" panel at the bottom showing per-role queue depth and average aging. This makes the implicit signal in the grid (lots of amber Cash cells = Treasury bottleneck) into an explicit one. Critical when a single reviewer covers many entities.
 
 For an org where Treasury-RE is one person and they're reviewing bank recs for 40+ entities, that's the single biggest failure point in the close, and it deserves permanent surface real estate.

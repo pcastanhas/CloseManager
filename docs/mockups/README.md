@@ -14,7 +14,7 @@ The mockups covered:
 
 5. **Portfolio by entity type** — improved heatmap with entity types in their own sections, each with their own column set. Showed the type-specific routing labels in column headers.
 
-6. **Portfolio workstream strip** — final iteration where columns are dropped entirely. Each row's workstreams are tiles in their natural order, with status color, name, and current reviewer baked into the tile. This is the design that was approved.
+6. **Portfolio workstream strip** — final iteration where columns are dropped entirely. Each row's workstreams are tiles in their natural order, with status color, name, and current reviewer baked into the tile. This is the design that was approved and is rendered as the Dashboard for users with cross-portfolio permission.
 
 7. **Reviewer queue (multi-entity)** — the queue redesigned with three sections (Stuck/Today/Expected), action focus banner, and rich tile content per item.
 
@@ -52,5 +52,5 @@ When building in Blazor + MudBlazor, the mockups translate as follows:
 - **Checklist items** → custom component built on `MudPaper` + `MudCheckBox` + nested comment thread
 - **Audit trail strip** → custom horizontal flex layout with colored event tiles
 - **Sidebar nav** → `MudNavMenu` with custom group dividers and active-state styling driven by `NavLink Match`
-- **Heatmap tiles** → custom flex layout with `repeat(auto-fit, minmax(110px, 1fr))` for responsive sizing
+- **Portfolio view tiles** → custom flex layout with `repeat(auto-fit, minmax(110px, 1fr))` for responsive sizing
 - **Locked button states** → standard `MudButton Disabled="true"` with a `MudTooltip` explaining why
