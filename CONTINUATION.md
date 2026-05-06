@@ -25,11 +25,11 @@ Design phase. No code has been written. The repository contains:
 ### UI screens still unsketched
 
 - [x] **Period Management page** (`docs/design/10-period-management.md`) — list of periods (one row per yyyyMM, collapsing the per-entity ClosePeriod rows), open/close/reopen actions, per-period detail view with per-entity rows, async period-open via Hangfire job with live progress, soft-confirm close (not hard-block) with required reason, typed-confirm phrase on close, individual entity early-close, and the closed-period write-freeze enforced at the SP layer via `sp_AssertPeriodOpen`. New SPs introduced: `sp_OpenPeriod`, `sp_ClosePeriod`, `sp_ReopenPeriod`, `sp_CloseEntityInPeriod`, `sp_AssertPeriodOpen`. Lifecycle walkthrough updated with the closed-period precondition pattern.
-- [ ] **Roles top-level admin page** — define system-wide role types. CRUD for the `Role` table. Likely the simplest admin page.
-- [ ] **Users admin page** — read-mostly view of `User` table since identity is sourced from Entra. Showing entity-role assignments per user, ability to soft-delete inactive users.
-- [ ] **Audit Search page** — full-text search over `AuditEvent`. Critical for SOX auditor work. Filterable by user, target table, target ID, period, action, date range.
-- [ ] **Work items page** — the user's queue of items waiting on them right now. Similar to reviewer queue but role-aware (shows preparer items if they have prep work, reviewer items if they have approvals due, scoped to current stage).
-- [ ] **My history page** — personal view of audit events. Scoped to events where `ActorUserId = current user`.
+- [x] **Roles top-level admin page** — designed in `docs/design/11-roles.md`.
+- [x] **Users admin page** — designed in `docs/design/12-users.md`.
+- [x] **Audit Search page** — designed in `docs/design/13-audit-search.md`.
+- [x] **Work items page** — designed in `docs/design/14-work-items.md`. Combined preparer + reviewer queue; supersedes reviewer queue doc for routing purposes.
+- [x] **My history page** — designed in `docs/design/15-my-history.md`.
 
 ### UI screens needing rework after multi-stage refactor
 
