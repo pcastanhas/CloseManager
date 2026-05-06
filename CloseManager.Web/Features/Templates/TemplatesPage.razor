@@ -1,10 +1,124 @@
 @page "/admin/templates"
 @attribute [Authorize]
+@inject AppDbContext Db
+@inject NavigationManager Nav
+@using CloseManager.Web.Data
+@using CloseManager.Web.Data.Services
+@using Microsoft.EntityFrameworkCore
 
 <PageTitle>Workflow templates — CloseManager</PageTitle>
 
-<MudText Typo="Typo.caption" Style="color: var(--mud-palette-text-secondary);" Class="mb-1">Configuration</MudText>
-<MudText Typo="Typo.h6" Style="font-weight:500;" Class="mb-4">Workflow templates</MudText>
-<MudText Typo="Typo.body2" Style="color: var(--mud-palette-text-secondary);">
-    Workflow template editor — implemented in Phase 4.
-</MudText>
+<div class="mb-4">
+    <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">Configuration</MudText>
+    <MudText Typo="Typo.h6" Style="font-weight:500">Workflow templates</MudText>
+</div>
+
+@if (_rows is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else
+{
+    <MudTable Items="@_rows" Dense="true" Hover="true" Elevation="0"
+              Style="border:0.5px solid var(--mud-palette-divider);border-radius:4px">
+        <HeaderContent>
+            <MudTh>Entity type</MudTh>
+            <MudTh>Current version</MudTh>
+            <MudTh Style="width:160px;text-align:right">Scale</MudTh>
+            <MudTh Style="width:80px"></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTr>
+                <MudTd>
+                    <MudText Typo="Typo.body2" Style="font-weight:500">
+                        @context.EntityTypeName
+                    </MudText>
+                    <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                        <code style="font-size:10px">@context.EntityTypeCode</code>
+                    </MudText>
+                </MudTd>
+                <MudTd>
+                    @if (context.CurrentVersion is null)
+                    {
+                        <MudText Typo="Typo.body2" Style="color:var(--mud-palette-text-secondary)">
+                            No template yet
+                        </MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2" Style="font-weight:500">
+                            v@context.CurrentVersion
+                        </MudText>
+                        @if (context.LastEditedAt.HasValue)
+                        {
+                            <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                                @FormatRelative(context.LastEditedAt.Value) by @context.LastEditedBy
+                            </MudText>
+                        }
+                    }
+                </MudTd>
+                <MudTd Style="text-align:right;padding-right:16px">
+                    @if (context.CurrentVersion is not null)
+                    {
+                        <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary);line-height:1.6">
+                            @context.WorkstreamCount workstreams<br />
+                            @context.ChecklistItemCount checklist items<br />
+                            @context.EntityCount entities
+                        </MudText>
+                    }
+                </MudTd>
+                <MudTd>
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                               OnClick="@(() => Nav.NavigateTo($"/admin/templates/{context.EntityTypeId}"))">
+                        @(context.CurrentVersion is null ? "Create" : "Edit")
+                    </MudButton>
+                </MudTd>
+            </MudTr>
+        </RowTemplate>
+    </MudTable>
+}
+
+@code {
+    record TemplateRow(int EntityTypeId, string EntityTypeCode, string EntityTypeName,
+                       int? CurrentVersion, DateTime? LastEditedAt, string? LastEditedBy,
+                       int WorkstreamCount, int ChecklistItemCount, int EntityCount);
+
+    private List<TemplateRow>? _rows;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _rows = await Db.EntityTypes
+            .Where(t => !t.IsDeleted && t.IsActive)
+            .OrderBy(t => t.Name)
+            .Select(t => new TemplateRow(
+                t.EntityTypeId, t.Code, t.Name,
+                Db.WorkflowTemplates
+                    .Where(w => w.EntityTypeId == t.EntityTypeId && w.IsCurrent && !w.IsDeleted)
+                    .Select(w => (int?)w.Version).FirstOrDefault(),
+                Db.WorkflowTemplates
+                    .Where(w => w.EntityTypeId == t.EntityTypeId && w.IsCurrent && !w.IsDeleted)
+                    .Select(w => (DateTime?)w.CreatedAtUtc).FirstOrDefault(),
+                Db.WorkflowTemplates
+                    .Where(w => w.EntityTypeId == t.EntityTypeId && w.IsCurrent && !w.IsDeleted)
+                    .Select(w => w.CreatedBy.DisplayName).FirstOrDefault(),
+                Db.WorkflowTemplates
+                    .Where(w => w.EntityTypeId == t.EntityTypeId && w.IsCurrent && !w.IsDeleted)
+                    .SelectMany(w => w.WorkstreamDefs).Count(),
+                Db.WorkflowTemplates
+                    .Where(w => w.EntityTypeId == t.EntityTypeId && w.IsCurrent && !w.IsDeleted)
+                    .SelectMany(w => w.WorkstreamDefs)
+                    .SelectMany(d => d.Stages)
+                    .SelectMany(s => s.ChecklistItems).Count(),
+                Db.Entities.Count(e => e.EntityTypeId == t.EntityTypeId && !e.IsDeleted && e.IsActive)
+            ))
+            .ToListAsync();
+    }
+
+    private static string FormatRelative(DateTime dt)
+    {
+        var diff = DateTime.UtcNow - dt;
+        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
+        if (diff.TotalDays < 30)  return $"{(int)diff.TotalDays}d ago";
+        return dt.ToString("MMM d, yyyy");
+    }
+}

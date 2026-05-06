@@ -1,0 +1,343 @@
+@page "/admin/entities"
+@attribute [Authorize]
+@inject AppDbContext Db
+@inject AuditService Audit
+@inject CurrentUserService CurrentUser
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+@using CloseManager.Web.Data
+@using CloseManager.Web.Data.Entities
+@using CloseManager.Web.Data.Services
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Entities — CloseManager</PageTitle>
+
+<div class="d-flex align-center justify-space-between mb-4">
+    <div>
+        <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">Configuration</MudText>
+        <MudText Typo="Typo.h6" Style="font-weight:500">Entities</MudText>
+    </div>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+               StartIcon="@Icons.Material.Outlined.Add"
+               OnClick="@(() => OpenModal(null))">
+        Add entity
+    </MudButton>
+</div>
+
+<div class="d-flex align-center gap-3 mb-3" style="flex-wrap:wrap">
+    <MudTextField @bind-Value="_search" Placeholder="Search entities…"
+                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Outlined.Search"
+                  Variant="Variant.Outlined" Margin="Margin.Dense"
+                  Style="max-width:220px" Immediate="true" />
+    <MudSelect T="string" @bind-Value="_filterType" Label="Type"
+               Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:160px"
+               Clearable="true">
+        @foreach (var et in _entityTypes)
+        {
+            <MudSelectItem Value="@et.Code">@et.Name</MudSelectItem>
+        }
+    </MudSelect>
+    <MudSwitch @bind-Value="_showInactive" Color="Color.Primary" Label="Show inactive" />
+</div>
+
+@if (_entities is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (!FilteredEntities.Any())
+{
+    <div class="d-flex flex-column align-center justify-center pa-12" style="gap:12px">
+        <MudIcon Icon="@Icons.Material.Outlined.CorporateFare"
+                 Style="font-size:48px;color:var(--mud-palette-text-secondary)" />
+        <MudText Typo="Typo.body2" Style="color:var(--mud-palette-text-secondary)">
+            No entities yet. Add the first entity to start managing closes.
+        </MudText>
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Outlined.Add"
+                   OnClick="@(() => OpenModal(null))">Add entity</MudButton>
+    </div>
+}
+else
+{
+    <MudTable Items="@FilteredEntities" Dense="true" Hover="true" Elevation="0"
+              Style="border:0.5px solid var(--mud-palette-divider);border-radius:4px">
+        <HeaderContent>
+            <MudTh Style="width:100px">Code</MudTh>
+            <MudTh>Name</MudTh>
+            <MudTh Style="width:140px">Type</MudTh>
+            <MudTh Style="width:100px;text-align:right">Assignments</MudTh>
+            <MudTh Style="width:90px">Status</MudTh>
+            <MudTh Style="width:100px"></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTr Style="@(context.IsActive ? "" : "opacity:0.55")">
+                <MudTd>
+                    <code style="font-size:12px;color:var(--mud-palette-text-secondary)">
+                        @context.Code
+                    </code>
+                </MudTd>
+                <MudTd>
+                    <MudLink Href="@($"/admin/entities/{context.EntityId}")"
+                             Style="font-size:13px;font-weight:500">
+                        @context.Name
+                    </MudLink>
+                </MudTd>
+                <MudTd>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                             Style="font-size:11px;height:20px">
+                        @context.EntityTypeName
+                    </MudChip>
+                </MudTd>
+                <MudTd Style="text-align:right;padding-right:20px">
+                    @if (context.AssignmentCount > 0)
+                    { <span>@context.AssignmentCount</span> }
+                    else
+                    { <span style="color:var(--mud-palette-text-disabled)">–</span> }
+                </MudTd>
+                <MudTd>
+                    <span class="@(context.IsActive ? "pill pill-success" : "pill pill-neutral")">
+                        @(context.IsActive ? "Active" : "Inactive")
+                    </span>
+                </MudTd>
+                <MudTd>
+                    <div class="d-flex gap-1">
+                        <MudIconButton Icon="@Icons.Material.Outlined.OpenInNew"
+                                       Size="Size.Small" Title="Open detail"
+                                       OnClick="@(() => Nav.NavigateTo($"/admin/entities/{context.EntityId}"))" />
+                        <MudIconButton Icon="@Icons.Material.Outlined.Edit"
+                                       Size="Size.Small" Title="Edit"
+                                       OnClick="@(() => OpenModal(context))" />
+                        @if (context.IsActive)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Outlined.Archive"
+                                           Size="Size.Small" Title="Deactivate"
+                                           OnClick="@(() => ConfirmDeactivate(context))" />
+                        }
+                        else
+                        {
+                            <MudIconButton Icon="@Icons.Material.Outlined.Unarchive"
+                                           Size="Size.Small" Title="Reactivate"
+                                           OnClick="@(() => ReactivateAsync(context))" />
+                        }
+                    </div>
+                </MudTd>
+            </MudTr>
+        </RowTemplate>
+    </MudTable>
+}
+
+@* ── Add / Edit modal ── *@
+<MudDialog @bind-IsVisible="_modalOpen"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(_editing is null ? "Add entity" : "Edit entity")</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_formValid">
+            <MudTextField Label="Code" @bind-Value="_draftCode"
+                          Required="true" RequiredError="Code is required"
+                          Disabled="@(_editing is not null)"
+                          Validation="@(new Func<string, string?>(ValidateCode))"
+                          HelperText="Short identifier used in SharePoint paths. Immutable after creation."
+                          Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-4" />
+
+            <MudTextField Label="Name" @bind-Value="_draftName"
+                          Required="true" RequiredError="Name is required"
+                          MaxLength="200"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-4" />
+
+            <MudSelect T="int" @bind-Value="_draftEntityTypeId" Label="Entity type"
+                       Required="true" RequiredError="Entity type is required"
+                       Disabled="@(_editing is not null)"
+                       Variant="Variant.Outlined" Margin="Margin.Dense">
+                @foreach (var et in _entityTypes)
+                {
+                    <MudSelectItem Value="@et.EntityTypeId">@et.Name</MudSelectItem>
+                }
+            </MudSelect>
+        </MudForm>
+        @if (!string.IsNullOrEmpty(_modalError))
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3" Dense="true">@_modalError</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="CloseModal">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   Disabled="@_saving" OnClick="SaveAsync">
+            @if (_saving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
+            else { <span>Save</span> }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@* ── Deactivate confirmation ── *@
+<MudDialog @bind-IsVisible="_deactivateOpen"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Deactivate — @_deactivateTarget?.Name?</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2">
+            This entity will be excluded from future period opens. Existing workstreams
+            are not affected.
+        </MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _deactivateOpen = false)">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Error"
+                   OnClick="DeactivateAsync">Deactivate</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    record EntityRow(long EntityId, string Code, string Name, bool IsActive,
+                     int EntityTypeId, string EntityTypeName, int AssignmentCount);
+    record EntityTypeRow(int EntityTypeId, string Code, string Name);
+
+    private List<EntityRow>? _entities;
+    private List<EntityTypeRow> _entityTypes = [];
+    private string _search = string.Empty;
+    private string? _filterType;
+    private bool _showInactive;
+
+    private bool _modalOpen, _saving;
+    private string _modalError = string.Empty;
+    private EntityRow? _editing;
+    private string _draftCode = string.Empty;
+    private string _draftName = string.Empty;
+    private int _draftEntityTypeId;
+    private MudForm _form = null!;
+    private bool _formValid;
+
+    private bool _deactivateOpen;
+    private EntityRow? _deactivateTarget;
+
+    private IEnumerable<EntityRow> FilteredEntities => (_entities ?? [])
+        .Where(e => (_showInactive || e.IsActive)
+                 && (string.IsNullOrWhiteSpace(_filterType) || e.EntityTypeName == _filterType
+                     || _entityTypes.FirstOrDefault(t => t.Code == _filterType)?.Name == e.EntityTypeName)
+                 && (string.IsNullOrWhiteSpace(_search)
+                     || e.Code.Contains(_search, StringComparison.OrdinalIgnoreCase)
+                     || e.Name.Contains(_search, StringComparison.OrdinalIgnoreCase)));
+
+    protected override async Task OnInitializedAsync()
+    {
+        _entityTypes = await Db.EntityTypes
+            .Where(t => !t.IsDeleted && t.IsActive)
+            .OrderBy(t => t.Name)
+            .Select(t => new EntityTypeRow(t.EntityTypeId, t.Code, t.Name))
+            .ToListAsync();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _entities = await Db.Entities
+            .Where(e => !e.IsDeleted)
+            .Select(e => new EntityRow(
+                e.EntityId, e.Code, e.Name, e.IsActive,
+                e.EntityTypeId, e.EntityType.Name,
+                Db.EntityRoleAssignments.Count(a => a.EntityId == e.EntityId && !a.IsDeleted)
+            ))
+            .OrderBy(e => e.Name)
+            .ToListAsync();
+    }
+
+    private void OpenModal(EntityRow? entity)
+    {
+        _editing = entity;
+        _draftCode = entity?.Code ?? string.Empty;
+        _draftName = entity?.Name ?? string.Empty;
+        _draftEntityTypeId = entity?.EntityTypeId ?? (_entityTypes.FirstOrDefault()?.EntityTypeId ?? 0);
+        _modalError = string.Empty;
+        _modalOpen = true;
+    }
+
+    private void CloseModal() { _modalOpen = false; _editing = null; }
+
+    private string? ValidateCode(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "Code is required";
+        if (!System.Text.RegularExpressions.Regex.IsMatch(value, @"^[A-Z0-9_\-]+$"))
+            return "Uppercase letters, digits, underscores, hyphens only";
+        if (value.Length > 40) return "Max 40 characters";
+        return null;
+    }
+
+    private async Task SaveAsync()
+    {
+        await _form.Validate();
+        if (!_formValid) return;
+
+        _saving = true;
+        _modalError = string.Empty;
+        try
+        {
+            var actorId  = await CurrentUser.GetUserIdAsync();
+            var actorOid = await CurrentUser.GetEntraObjectIdAsync();
+
+            if (_editing is null)
+            {
+                if (await Db.Entities.AnyAsync(e => e.Code == _draftCode && !e.IsDeleted))
+                { _modalError = "Code already in use"; return; }
+
+                var entity = new Entity
+                {
+                    Code = _draftCode, Name = _draftName,
+                    EntityTypeId = _draftEntityTypeId,
+                    IsActive = true, CreatedAtUtc = DateTime.UtcNow,
+                    CreatedByUserId = actorId
+                };
+                Db.Entities.Add(entity);
+                await Db.SaveChangesAsync();
+                await Audit.WriteAsync(actorId, actorOid, "Entity", entity.EntityId,
+                    "EntityCreated", after: new { entity.Code, entity.Name, entity.EntityTypeId });
+                await Db.SaveChangesAsync();
+                Snackbar.Add($"Entity '{entity.Name}' created", Severity.Success);
+            }
+            else
+            {
+                var entity = await Db.Entities.SingleAsync(e => e.EntityId == _editing.EntityId);
+                var before = new { entity.Name };
+                entity.Name = _draftName;
+                await Audit.WriteAsync(actorId, actorOid, "Entity", entity.EntityId,
+                    "EntityRenamed", before: before, after: new { entity.Name });
+                await Db.SaveChangesAsync();
+                Snackbar.Add($"Entity updated", Severity.Success);
+            }
+
+            CloseModal();
+            await LoadAsync();
+        }
+        catch (Exception ex) { _modalError = $"Save failed: {ex.Message}"; }
+        finally { _saving = false; }
+    }
+
+    private void ConfirmDeactivate(EntityRow e) { _deactivateTarget = e; _deactivateOpen = true; }
+
+    private async Task DeactivateAsync()
+    {
+        if (_deactivateTarget is null) return;
+        var actorId  = await CurrentUser.GetUserIdAsync();
+        var actorOid = await CurrentUser.GetEntraObjectIdAsync();
+        var entity = await Db.Entities.SingleAsync(e => e.EntityId == _deactivateTarget.EntityId);
+        entity.IsActive = false;
+        await Audit.WriteAsync(actorId, actorOid, "Entity", entity.EntityId, "EntityDeactivated");
+        await Db.SaveChangesAsync();
+        _deactivateOpen = false;
+        Snackbar.Add($"'{entity.Name}' deactivated", Severity.Info);
+        await LoadAsync();
+    }
+
+    private async Task ReactivateAsync(EntityRow row)
+    {
+        var actorId  = await CurrentUser.GetUserIdAsync();
+        var actorOid = await CurrentUser.GetEntraObjectIdAsync();
+        var entity = await Db.Entities.SingleAsync(e => e.EntityId == row.EntityId);
+        entity.IsActive = true;
+        await Audit.WriteAsync(actorId, actorOid, "Entity", entity.EntityId, "EntityReactivated");
+        await Db.SaveChangesAsync();
+        Snackbar.Add($"'{entity.Name}' reactivated", Severity.Success);
+        await LoadAsync();
+    }
+}

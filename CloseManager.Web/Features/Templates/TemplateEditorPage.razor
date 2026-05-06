@@ -1,0 +1,666 @@
+@page "/admin/templates/{EntityTypeId:int}"
+@attribute [Authorize]
+@inject AppDbContext Db
+@inject AuditService Audit
+@inject CurrentUserService CurrentUser
+@inject AppSettingService Settings
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@using CloseManager.Web.Data
+@using CloseManager.Web.Data.Entities
+@using CloseManager.Web.Data.Services
+@using System.Text.Json
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Template editor — CloseManager</PageTitle>
+
+@if (_entityType is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    return;
+}
+
+@* ── Header ── *@
+<div class="d-flex align-center justify-space-between mb-4">
+    <div>
+        <MudLink Href="/admin/templates"
+                 Style="font-size:13px;color:var(--mud-palette-text-secondary)">
+            Templates
+        </MudLink>
+        <MudText Typo="Typo.h6" Style="font-weight:500">@_entityType.Name</MudText>
+        <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+            @if (_priorVersion.HasValue)
+            { <span>Editing v@_priorVersion → will save as v@(_priorVersion + 1)</span> }
+            else
+            { <span>Creating v1 (no current template)</span> }
+        </MudText>
+    </div>
+    <div class="d-flex gap-2">
+        <MudButton Variant="Variant.Outlined" OnClick="CancelAsync">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   Disabled="@(!_isDirty)"
+                   OnClick="@(() => _saveDialogOpen = true)">
+            Save
+        </MudButton>
+    </div>
+</div>
+
+@* ── Validation banner ── *@
+@if (_validationErrors.Any())
+{
+    <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">
+        @foreach (var e in _validationErrors)
+        { <div>@e</div> }
+    </MudAlert>
+}
+
+@* ── Workstream list ── *@
+@foreach (var (ws, wi) in _workstreams.Select((w, i) => (w, i)))
+{
+    <MudPaper Elevation="0" Class="mb-3"
+              Style="border:0.5px solid var(--mud-palette-divider);border-radius:4px;overflow:hidden">
+
+        @* Workstream header *@
+        <div class="d-flex align-center gap-2 pa-3"
+             style="border-bottom:0.5px solid var(--mud-palette-divider);background:var(--mud-palette-background-grey)">
+            <MudIcon Icon="@Icons.Material.Outlined.DragIndicator"
+                     Style="color:var(--mud-palette-text-disabled);cursor:grab" />
+            <MudText Typo="Typo.body2" Style="font-weight:500;flex:1">
+                @(wi + 1). @ws.Name
+                <code style="font-size:11px;color:var(--mud-palette-text-secondary);margin-left:6px">
+                    @ws.Code
+                </code>
+            </MudText>
+            <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                @ws.Stages.Count approver(s) ·
+                @ws.Stages.Sum(s => s.ChecklistItems.Count) items
+            </MudText>
+            <MudIconButton Icon="@Icons.Material.Outlined.Edit" Size="Size.Small"
+                           OnClick="@(() => OpenWorkstreamModal(ws))" />
+            <MudIconButton Icon="@Icons.Material.Outlined.Delete" Size="Size.Small"
+                           OnClick="@(() => DeleteWorkstream(ws))" />
+            @if (wi > 0)
+            {
+                <MudIconButton Icon="@Icons.Material.Outlined.ArrowUpward" Size="Size.Small"
+                               OnClick="@(() => MoveWorkstream(ws, -1))" />
+            }
+            @if (wi < _workstreams.Count - 1)
+            {
+                <MudIconButton Icon="@Icons.Material.Outlined.ArrowDownward" Size="Size.Small"
+                               OnClick="@(() => MoveWorkstream(ws, 1))" />
+            }
+        </div>
+
+        @* Approver cards *@
+        <div class="pa-3">
+            @* Implicit preparer — always first *@
+            <div class="d-flex align-center gap-2 mb-2 pa-2"
+                 style="border:0.5px dashed var(--mud-palette-divider);border-radius:4px;
+                        background:transparent;font-size:12px;color:var(--mud-palette-text-secondary)">
+                <MudIcon Icon="@Icons.Material.Outlined.EditNote" Style="font-size:16px" />
+                <span>Preparer (implicit — all workstreams)</span>
+            </div>
+
+            @foreach (var (stage, si) in ws.Stages.Select((s, i) => (s, i)))
+            {
+                <div class="d-flex align-center gap-2 mb-2 pa-2"
+                     style="border:0.5px solid #1D9E7533;border-radius:4px;
+                            background:#F0FAF6;font-size:12px">
+                    <MudIcon Icon="@Icons.Material.Outlined.DragIndicator"
+                             Style="color:var(--mud-palette-text-disabled);font-size:16px;cursor:grab" />
+                    <span style="font-size:10px;font-weight:500;color:#0F6E56;
+                                 background:#D0F0E4;padding:1px 5px;border-radius:3px">
+                        A@(si + 1)
+                    </span>
+                    <span style="flex:1;font-weight:500">
+                        @(string.IsNullOrEmpty(stage.DisplayName) ? stage.RoleName : stage.DisplayName)
+                    </span>
+                    <span style="color:var(--mud-palette-text-secondary)">
+                        @stage.ChecklistItems.Count items · @stage.StuckThresholdHours h
+                    </span>
+                    @if (stage.IsFinalApproval)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Success"
+                                 Variant="Variant.Outlined" Style="font-size:10px;height:18px">
+                            final
+                        </MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Default"
+                                 Variant="Variant.Outlined" Style="font-size:10px;height:18px">
+                            advances
+                        </MudChip>
+                    }
+                    <MudIconButton Icon="@Icons.Material.Outlined.Edit" Size="Size.Small"
+                                   OnClick="@(() => OpenApproverModal(ws, stage))" />
+                    @if (si > 0)
+                    {
+                        <MudIconButton Icon="@Icons.Material.Outlined.ArrowUpward" Size="Size.Small"
+                                       OnClick="@(() => MoveStage(ws, stage, -1))" />
+                    }
+                    @if (si < ws.Stages.Count - 1)
+                    {
+                        <MudIconButton Icon="@Icons.Material.Outlined.ArrowDownward" Size="Size.Small"
+                                       OnClick="@(() => MoveStage(ws, stage, 1))" />
+                    }
+                </div>
+            }
+
+            <MudButton Size="Size.Small" StartIcon="@Icons.Material.Outlined.Add"
+                       OnClick="@(() => AddStage(ws))">
+                Add approver
+            </MudButton>
+        </div>
+    </MudPaper>
+}
+
+<MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Outlined.Add"
+           OnClick="AddWorkstream" Class="mb-4">
+    Add workstream
+</MudButton>
+
+@* ── Workstream name/code modal ── *@
+<MudDialog @bind-IsVisible="_wsModalOpen"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(_wsEditing is null ? "Add workstream" : "Edit workstream")</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudTextField Label="Code" @bind-Value="_wsDraftCode"
+                      HelperText="Uppercase letters, digits, underscores"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3" />
+        <MudTextField Label="Name" @bind-Value="_wsDraftName"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _wsModalOpen = false)">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveWorkstreamModal">
+            OK
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@* ── Approver edit modal ── *@
+<MudDialog @bind-IsVisible="_approverModalOpen"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Edit approver</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudSelect T="int" @bind-Value="_apDraftRoleId" Label="Role"
+                   Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3">
+            @foreach (var r in _roles)
+            {
+                <MudSelectItem Value="@r.RoleId">@r.Name (@r.Code)</MudSelectItem>
+            }
+        </MudSelect>
+        <MudTextField Label="Display name (optional)" @bind-Value="_apDraftDisplayName"
+                      HelperText="Override role name for display (e.g. 'Treasury sign-off')"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3" />
+        <MudNumericField T="int" Label="Stuck threshold (hours)" @bind-Value="_apDraftThreshold"
+                         Min="1" Max="720"
+                         HelperText="Workstream flagged stuck in Active Workflows after this many hours"
+                         Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3" />
+        <MudCheckBox @bind-Value="_apDraftIsFinal" Label="Final approval"
+                     Color="Color.Primary" />
+        <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary);display:block;margin-top:2px;margin-left:30px">
+            The approver whose sign-off marks the workstream complete. Exactly one per workstream.
+        </MudText>
+
+        <MudDivider Class="my-3" />
+
+        <MudText Typo="Typo.subtitle2" Class="mb-2">Default checklist items</MudText>
+        @foreach (var (item, idx) in _apDraftItems.Select((x, i) => (x, i)))
+        {
+            <div class="d-flex align-center gap-2 mb-2">
+                <MudTextField @bind-Value="item.Text" Placeholder="Checklist item text"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" Style="flex:1" />
+                <MudIconButton Icon="@Icons.Material.Outlined.Delete" Size="Size.Small"
+                               OnClick="@(() => _apDraftItems.RemoveAt(idx))" />
+            </div>
+        }
+        <MudButton Size="Size.Small" StartIcon="@Icons.Material.Outlined.Add"
+                   OnClick="@(() => _apDraftItems.Add(new DraftItem()))">
+            Add item
+        </MudButton>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Color="Color.Error" Style="margin-right:auto"
+                   OnClick="DeleteApprover">Delete approver</MudButton>
+        <MudButton OnClick="@(() => _approverModalOpen = false)">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   OnClick="SaveApproverModal">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@* ── Discard confirmation ── *@
+<MudDialog @bind-IsVisible="_discardOpen"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Discard changes?</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2">Your unsaved changes will be lost.</MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _discardOpen = false)">Keep editing</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Error"
+                   OnClick="@(() => Nav.NavigateTo("/admin/templates"))">Discard</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@* ── Save dialog ── *@
+<MudDialog @bind-IsVisible="_saveDialogOpen"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Save as v@(_priorVersion.HasValue ? _priorVersion + 1 : 1)</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_validationErrors.Any())
+        {
+            <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">
+                Fix validation errors before saving:
+                @foreach (var e in _validationErrors) { <div>• @e</div> }
+            </MudAlert>
+        }
+        else
+        {
+            <MudAlert Severity="Severity.Success" Dense="true" Class="mb-3">
+                All workstreams have exactly one Final approver. Validation passed.
+            </MudAlert>
+        }
+
+        <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3" Style="font-size:12px">
+            <strong>@_entityCount entities</strong> use this template.
+            New closes will instantiate from v@(_priorVersion.HasValue ? _priorVersion + 1 : 1).
+            In-flight workstreams stay on their current version.
+        </MudAlert>
+
+        <MudTextField Label="Save notes (required)" @bind-Value="_saveNotes"
+                      Lines="3" Placeholder="Describe what changed and why…"
+                      Required="true"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _saveDialogOpen = false)">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   Disabled="@(string.IsNullOrWhiteSpace(_saveNotes) || _validationErrors.Any() || _saving)"
+                   OnClick="CommitSaveAsync">
+            @if (_saving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
+            else { <span>Save</span> }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [Parameter] public int EntityTypeId { get; set; }
+
+    // ── Working copy data model ───────────────────────────────────────────────
+    class DraftWorkstream
+    {
+        public Guid Id { get; set; } = Guid.NewGuid();
+        public string Code { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public List<DraftStage> Stages { get; set; } = [];
+    }
+
+    class DraftStage
+    {
+        public Guid Id { get; set; } = Guid.NewGuid();
+        public int RoleId { get; set; }
+        public string RoleName { get; set; } = string.Empty;
+        public string? DisplayName { get; set; }
+        public bool IsFinalApproval { get; set; }
+        public int StuckThresholdHours { get; set; } = 24;
+        public List<DraftItem> ChecklistItems { get; set; } = [];
+    }
+
+    class DraftItem
+    {
+        public string Text { get; set; } = string.Empty;
+    }
+
+    record RoleOption(int RoleId, string Code, string Name);
+
+    // ── Page state ────────────────────────────────────────────────────────────
+    private Data.Entities.EntityType? _entityType;
+    private int? _priorVersion;
+    private long? _priorTemplateId;
+    private int _entityCount;
+    private List<DraftWorkstream> _workstreams = [];
+    private List<RoleOption> _roles = [];
+    private bool _isDirty;
+    private List<string> _validationErrors = [];
+
+    // Workstream modal
+    private bool _wsModalOpen;
+    private DraftWorkstream? _wsEditing;
+    private string _wsDraftCode = string.Empty, _wsDraftName = string.Empty;
+
+    // Approver modal
+    private bool _approverModalOpen;
+    private DraftWorkstream? _apWorkstream;
+    private DraftStage? _apEditing;
+    private int _apDraftRoleId;
+    private string _apDraftDisplayName = string.Empty;
+    private int _apDraftThreshold = 24;
+    private bool _apDraftIsFinal;
+    private List<DraftItem> _apDraftItems = [];
+
+    // Dialogs
+    private bool _discardOpen, _saveDialogOpen, _saving;
+    private string _saveNotes = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _entityType = await Db.EntityTypes
+            .FirstOrDefaultAsync(t => t.EntityTypeId == EntityTypeId && !t.IsDeleted);
+
+        if (_entityType is null) { Nav.NavigateTo("/admin/templates"); return; }
+
+        _roles = await Db.Roles
+            .Where(r => !r.IsDeleted && r.IsActive)
+            .OrderBy(r => r.Name)
+            .Select(r => new RoleOption(r.RoleId, r.Code, r.Name))
+            .ToListAsync();
+
+        _entityCount = await Db.Entities.CountAsync(e =>
+            e.EntityTypeId == EntityTypeId && !e.IsDeleted && e.IsActive);
+
+        _apDraftThreshold = await Settings.GetStuckThresholdHoursAsync();
+
+        // Load current version as working copy
+        var current = await Db.WorkflowTemplates
+            .Include(t => t.WorkstreamDefs)
+                .ThenInclude(d => d.Stages)
+                    .ThenInclude(s => s.ChecklistItems)
+            .Include(t => t.WorkstreamDefs)
+                .ThenInclude(d => d.Stages)
+                    .ThenInclude(s => s.Role)
+            .FirstOrDefaultAsync(t =>
+                t.EntityTypeId == EntityTypeId && t.IsCurrent && !t.IsDeleted);
+
+        if (current is not null)
+        {
+            _priorVersion = current.Version;
+            _priorTemplateId = current.WorkflowTemplateId;
+            _workstreams = current.WorkstreamDefs
+                .OrderBy(d => d.OrderIndex)
+                .Select(d => new DraftWorkstream
+                {
+                    Code = d.Code, Name = d.Name,
+                    Stages = d.Stages.OrderBy(s => s.OrderIndex).Select(s => new DraftStage
+                    {
+                        RoleId = s.RoleId,
+                        RoleName = s.Role.Name,
+                        DisplayName = s.DisplayName,
+                        IsFinalApproval = s.IsFinalApproval,
+                        StuckThresholdHours = s.StuckThresholdHours ?? _apDraftThreshold,
+                        ChecklistItems = s.ChecklistItems
+                            .OrderBy(i => i.OrderIndex)
+                            .Select(i => new DraftItem { Text = i.Text }).ToList()
+                    }).ToList()
+                }).ToList();
+        }
+
+        Validate();
+    }
+
+    private void MarkDirty() { _isDirty = true; Validate(); }
+
+    private void Validate()
+    {
+        _validationErrors = [];
+        foreach (var ws in _workstreams)
+        {
+            if (string.IsNullOrWhiteSpace(ws.Code))
+                _validationErrors.Add($"Workstream '{ws.Name}' has no code");
+            if (string.IsNullOrWhiteSpace(ws.Name))
+                _validationErrors.Add("A workstream has no name");
+            var finalCount = ws.Stages.Count(s => s.IsFinalApproval);
+            if (!ws.Stages.Any())
+                _validationErrors.Add($"'{ws.Name}' has no approvers — add at least one");
+            else if (finalCount == 0)
+                _validationErrors.Add($"'{ws.Name}' has no Final approver — exactly one required");
+            else if (finalCount > 1)
+                _validationErrors.Add($"'{ws.Name}' has {finalCount} Final approvers — only one allowed");
+        }
+    }
+
+    // ── Workstream actions ────────────────────────────────────────────────────
+    private void AddWorkstream()
+    {
+        _wsEditing = null;
+        _wsDraftCode = _wsDraftName = string.Empty;
+        _wsModalOpen = true;
+    }
+
+    private void OpenWorkstreamModal(DraftWorkstream ws)
+    {
+        _wsEditing = ws;
+        _wsDraftCode = ws.Code;
+        _wsDraftName = ws.Name;
+        _wsModalOpen = true;
+    }
+
+    private void SaveWorkstreamModal()
+    {
+        if (_wsEditing is null)
+        {
+            _workstreams.Add(new DraftWorkstream { Code = _wsDraftCode, Name = _wsDraftName });
+        }
+        else
+        {
+            _wsEditing.Code = _wsDraftCode;
+            _wsEditing.Name = _wsDraftName;
+        }
+        _wsModalOpen = false;
+        MarkDirty();
+    }
+
+    private void DeleteWorkstream(DraftWorkstream ws) { _workstreams.Remove(ws); MarkDirty(); }
+
+    private void MoveWorkstream(DraftWorkstream ws, int dir)
+    {
+        var idx = _workstreams.IndexOf(ws);
+        var newIdx = idx + dir;
+        if (newIdx < 0 || newIdx >= _workstreams.Count) return;
+        _workstreams.RemoveAt(idx);
+        _workstreams.Insert(newIdx, ws);
+        MarkDirty();
+    }
+
+    // ── Stage / approver actions ──────────────────────────────────────────────
+    private void AddStage(DraftWorkstream ws)
+    {
+        var firstRole = _roles.FirstOrDefault();
+        var stage = new DraftStage
+        {
+            RoleId = firstRole?.RoleId ?? 0,
+            RoleName = firstRole?.Name ?? string.Empty,
+            StuckThresholdHours = _apDraftThreshold
+        };
+        ws.Stages.Add(stage);
+        OpenApproverModal(ws, stage);
+        MarkDirty();
+    }
+
+    private void OpenApproverModal(DraftWorkstream ws, DraftStage stage)
+    {
+        _apWorkstream = ws;
+        _apEditing = stage;
+        _apDraftRoleId = stage.RoleId;
+        _apDraftDisplayName = stage.DisplayName ?? string.Empty;
+        _apDraftThreshold = stage.StuckThresholdHours;
+        _apDraftIsFinal = stage.IsFinalApproval;
+        _apDraftItems = stage.ChecklistItems.Select(i => new DraftItem { Text = i.Text }).ToList();
+        _approverModalOpen = true;
+    }
+
+    private void SaveApproverModal()
+    {
+        if (_apEditing is null || _apWorkstream is null) return;
+
+        // If setting Final, clear it from other stages in the same workstream first
+        if (_apDraftIsFinal)
+            foreach (var s in _apWorkstream.Stages.Where(s => s != _apEditing))
+                s.IsFinalApproval = false;
+
+        var role = _roles.FirstOrDefault(r => r.RoleId == _apDraftRoleId);
+        _apEditing.RoleId = _apDraftRoleId;
+        _apEditing.RoleName = role?.Name ?? string.Empty;
+        _apEditing.DisplayName = string.IsNullOrWhiteSpace(_apDraftDisplayName)
+            ? null : _apDraftDisplayName;
+        _apEditing.StuckThresholdHours = _apDraftThreshold;
+        _apEditing.IsFinalApproval = _apDraftIsFinal;
+        _apEditing.ChecklistItems = _apDraftItems
+            .Where(i => !string.IsNullOrWhiteSpace(i.Text)).ToList();
+
+        _approverModalOpen = false;
+        MarkDirty();
+    }
+
+    private void DeleteApprover()
+    {
+        if (_apWorkstream is null || _apEditing is null) return;
+        _apWorkstream.Stages.Remove(_apEditing);
+        _approverModalOpen = false;
+        MarkDirty();
+    }
+
+    private void MoveStage(DraftWorkstream ws, DraftStage stage, int dir)
+    {
+        var idx = ws.Stages.IndexOf(stage);
+        var newIdx = idx + dir;
+        if (newIdx < 0 || newIdx >= ws.Stages.Count) return;
+        ws.Stages.RemoveAt(idx);
+        ws.Stages.Insert(newIdx, stage);
+        MarkDirty();
+    }
+
+    // ── Cancel / navigate-away ────────────────────────────────────────────────
+    private async Task CancelAsync()
+    {
+        if (_isDirty) { _discardOpen = true; return; }
+        Nav.NavigateTo("/admin/templates");
+    }
+
+    // ── Commit save ───────────────────────────────────────────────────────────
+    private async Task CommitSaveAsync()
+    {
+        Validate();
+        if (_validationErrors.Any()) return;
+
+        _saving = true;
+        try
+        {
+            var actorId  = await CurrentUser.GetUserIdAsync();
+            var actorOid = await CurrentUser.GetEntraObjectIdAsync();
+
+            // Capture prior structure for audit BeforeJson
+            string? priorJson = null;
+            if (_priorTemplateId.HasValue)
+            {
+                var prior = await Db.WorkflowTemplates
+                    .Include(t => t.WorkstreamDefs).ThenInclude(d => d.Stages)
+                        .ThenInclude(s => s.ChecklistItems)
+                    .SingleAsync(t => t.WorkflowTemplateId == _priorTemplateId);
+                priorJson = JsonSerializer.Serialize(prior, new JsonSerializerOptions
+                    { ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles });
+
+                // Flip prior current to historical
+                prior.IsCurrent = false;
+            }
+
+            // Create new version
+            var newVersion = (_priorVersion ?? 0) + 1;
+            var newTemplate = new WorkflowTemplate
+            {
+                EntityTypeId = EntityTypeId,
+                Version = newVersion,
+                IsCurrent = true,
+                Notes = _saveNotes,
+                CreatedAtUtc = DateTime.UtcNow,
+                CreatedByUserId = actorId
+            };
+            Db.WorkflowTemplates.Add(newTemplate);
+            await Db.SaveChangesAsync();
+
+            // Insert workstream defs
+            for (var wi = 0; wi < _workstreams.Count; wi++)
+            {
+                var ws = _workstreams[wi];
+                var def = new WorkstreamDef
+                {
+                    WorkflowTemplateId = newTemplate.WorkflowTemplateId,
+                    Code = ws.Code, Name = ws.Name, OrderIndex = wi
+                };
+                Db.WorkstreamDefs.Add(def);
+                await Db.SaveChangesAsync();
+
+                for (var si = 0; si < ws.Stages.Count; si++)
+                {
+                    var stage = ws.Stages[si];
+                    var defStage = new WorkstreamDefStage
+                    {
+                        WorkstreamDefId = def.WorkstreamDefId,
+                        OrderIndex = si + 1, // 0 = implicit preparer
+                        RoleId = stage.RoleId,
+                        StageKind = "Review",
+                        DisplayName = stage.DisplayName,
+                        IsFinalApproval = stage.IsFinalApproval,
+                        StuckThresholdHours = stage.StuckThresholdHours
+                    };
+                    Db.WorkstreamDefStages.Add(defStage);
+                    await Db.SaveChangesAsync();
+
+                    for (var ci = 0; ci < stage.ChecklistItems.Count; ci++)
+                    {
+                        Db.WorkstreamDefChecklistItems.Add(new WorkstreamDefChecklistItem
+                        {
+                            WorkstreamDefStageId = defStage.WorkstreamDefStageId,
+                            OrderIndex = ci,
+                            Text = stage.ChecklistItems[ci].Text,
+                            IsRequired = true
+                        });
+                    }
+                    await Db.SaveChangesAsync();
+                }
+            }
+
+            // Audit event
+            var afterJson = JsonSerializer.Serialize(new
+            {
+                newTemplate.Version, newTemplate.Notes,
+                Workstreams = _workstreams.Select(w => new
+                {
+                    w.Code, w.Name,
+                    Stages = w.Stages.Select(s => new
+                    {
+                        s.RoleName, s.IsFinalApproval, s.StuckThresholdHours,
+                        ChecklistItems = s.ChecklistItems.Count
+                    })
+                })
+            });
+
+            await Audit.WriteAsync(actorId, actorOid,
+                "WorkflowTemplate", newTemplate.WorkflowTemplateId,
+                "TemplateSaved",
+                before: priorJson is null ? null : (object)priorJson,
+                after: afterJson,
+                notes: _saveNotes);
+            await Db.SaveChangesAsync();
+
+            Snackbar.Add($"Template saved as v{newVersion}", Severity.Success);
+            _saveDialogOpen = false;
+            Nav.NavigateTo("/admin/templates");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Save failed: {ex.Message}", Severity.Error);
+        }
+        finally { _saving = false; }
+    }
+}

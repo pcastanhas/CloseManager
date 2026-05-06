@@ -1,0 +1,391 @@
+@page "/admin/entities/{EntityId:long}"
+@attribute [Authorize]
+@inject AppDbContext Db
+@inject AuditService Audit
+@inject CurrentUserService CurrentUser
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+@using CloseManager.Web.Data
+@using CloseManager.Web.Data.Entities
+@using CloseManager.Web.Data.Services
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>@(_entity?.Name ?? "Entity") — CloseManager</PageTitle>
+
+@if (_entity is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    return;
+}
+
+<div class="d-flex align-center gap-2 mb-1">
+    <MudLink Href="/admin/entities" Style="font-size:13px;color:var(--mud-palette-text-secondary)">
+        Entities
+    </MudLink>
+    <MudIcon Icon="@Icons.Material.Outlined.ChevronRight"
+             Style="font-size:14px;color:var(--mud-palette-text-secondary)" />
+    <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+        @_entity.EntityType?.Name
+    </MudText>
+</div>
+
+<div class="d-flex align-center justify-space-between mb-3">
+    <div>
+        <MudText Typo="Typo.h6" Style="font-weight:500">@_entity.Name</MudText>
+        <code style="font-size:11px;color:var(--mud-palette-text-secondary)">@_entity.Code</code>
+    </div>
+    <span class="@(_entity.IsActive ? "pill pill-success" : "pill pill-neutral")">
+        @(_entity.IsActive ? "Active" : "Inactive")
+    </span>
+</div>
+
+<MudTabs Elevation="0" Rounded="false" ApplyEffectsToContainer="false"
+         Style="border-bottom:0.5px solid var(--mud-palette-divider)">
+
+    @* ── Workflow tab ── *@
+    <MudTabPanel Text="Workflow">
+        <div class="pa-4">
+            @if (_template is null)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true">
+                    No workflow template configured for entity type '@_entity.EntityType?.Name'.
+                    <MudLink Href="/admin/templates" Class="ml-2">Configure templates →</MudLink>
+                </MudAlert>
+            }
+            else
+            {
+                <div class="d-flex align-center justify-space-between mb-3">
+                    <MudText Typo="Typo.body2">
+                        <strong>Template v@_template.Version</strong>
+                        — @_template.Notes
+                    </MudText>
+                    <MudLink Href="/admin/templates" Style="font-size:12px">Edit template →</MudLink>
+                </div>
+                @foreach (var ws in _workstreamDefs)
+                {
+                    <MudPaper Elevation="0" Class="mb-2 pa-3"
+                              Style="border:0.5px solid var(--mud-palette-divider);border-radius:4px">
+                        <div class="d-flex align-center justify-space-between">
+                            <div>
+                                <span style="font-size:13px;font-weight:500">@ws.Name</span>
+                                <code style="font-size:11px;color:var(--mud-palette-text-secondary);margin-left:6px">
+                                    @ws.Code
+                                </code>
+                            </div>
+                            <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                                @ws.StageCount stage(s) · @ws.ChecklistItemCount items
+                            </MudText>
+                        </div>
+                        <div class="d-flex align-center gap-2 mt-2">
+                            <span style="font-size:11px;color:var(--mud-palette-text-secondary)">
+                                Prep →
+                            </span>
+                            @foreach (var stage in ws.Stages)
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                         Color="@(stage.IsFinal ? Color.Success : Color.Default)"
+                                         Style="font-size:11px;height:20px">
+                                    @stage.RoleName @(stage.IsFinal ? "★" : "")
+                                </MudChip>
+                                @if (!stage.IsLast) { <span style="font-size:11px">→</span> }
+                            }
+                        </div>
+                    </MudPaper>
+                }
+            }
+        </div>
+    </MudTabPanel>
+
+    @* ── Roles tab ── *@
+    <MudTabPanel Text="Roles">
+        <div class="pa-4">
+            <div class="d-flex align-center justify-space-between mb-3">
+                <MudText Typo="Typo.body2" Style="color:var(--mud-palette-text-secondary)">
+                    Assign users to roles for this entity.
+                    Multiple users per role are supported.
+                </MudText>
+                <MudButton Size="Size.Small" Variant="Variant.Outlined"
+                           StartIcon="@Icons.Material.Outlined.Add"
+                           OnClick="OpenAssignModal">
+                    Assign role
+                </MudButton>
+            </div>
+
+            @foreach (var grp in _assignments.GroupBy(a => a.RoleCode).OrderBy(g => g.Key))
+            {
+                <MudPaper Elevation="0" Class="mb-3 pa-3"
+                          Style="border:0.5px solid var(--mud-palette-divider);border-radius:4px">
+                    <div class="d-flex align-center justify-space-between mb-2">
+                        <div>
+                            <span style="font-size:13px;font-weight:500">@grp.First().RoleName</span>
+                            <code style="font-size:11px;color:var(--mud-palette-text-secondary);margin-left:6px">
+                                @grp.Key
+                            </code>
+                        </div>
+                    </div>
+                    @foreach (var a in grp)
+                    {
+                        <div class="d-flex align-center justify-space-between pa-1">
+                            <div class="d-flex align-center gap-2">
+                                <MudAvatar Style="width:24px;height:24px;font-size:10px;
+                                                  background:var(--mud-palette-primary);color:white">
+                                    @GetInitials(a.UserDisplayName)
+                                </MudAvatar>
+                                <MudText Typo="Typo.body2" Style="font-size:13px">
+                                    @a.UserDisplayName
+                                </MudText>
+                                <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                                    @a.UserUpn
+                                </MudText>
+                            </div>
+                            <MudIconButton Icon="@Icons.Material.Outlined.PersonRemove"
+                                           Size="Size.Small" Title="Remove assignment"
+                                           OnClick="@(() => RemoveAssignmentAsync(a))" />
+                        </div>
+                    }
+                </MudPaper>
+            }
+
+            @if (!_assignments.Any())
+            {
+                <MudText Typo="Typo.body2" Style="color:var(--mud-palette-text-secondary)">
+                    No role assignments yet for this entity.
+                </MudText>
+            }
+        </div>
+    </MudTabPanel>
+
+    @* ── History tab ── *@
+    <MudTabPanel Text="History">
+        <div class="pa-4">
+            <MudText Typo="Typo.body2" Style="color:var(--mud-palette-text-secondary)" Class="mb-3">
+                Recent audit events for this entity.
+            </MudText>
+            @foreach (var evt in _recentAudit)
+            {
+                <div style="display:flex;align-items:baseline;gap:10px;padding:6px 0;
+                            border-bottom:0.5px solid var(--mud-palette-divider);font-size:12px">
+                    <code style="font-size:10px;background:var(--mud-palette-background-grey);
+                                 padding:1px 5px;border-radius:3px;white-space:nowrap">
+                        @evt.Action
+                    </code>
+                    <span style="color:var(--mud-palette-text-secondary);flex:1">
+                        @evt.ActorName
+                    </span>
+                    <span style="font-size:11px;color:var(--mud-palette-text-disabled);white-space:nowrap">
+                        @evt.OccurredAtUtc.ToString("MMM d, HH:mm")
+                    </span>
+                </div>
+            }
+            <MudLink Href="@($"/admin/audit?entityId={EntityId}")"
+                     Style="font-size:12px;display:block;margin-top:12px">
+                Full audit trail →
+            </MudLink>
+        </div>
+    </MudTabPanel>
+
+</MudTabs>
+
+@* ── Assign role modal ── *@
+<MudDialog @bind-IsVisible="_assignModalOpen"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Assign role — @_entity.Name</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudSelect T="int" @bind-Value="_assignRoleId" Label="Role"
+                   Required="true" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3">
+            @foreach (var r in _availableRoles)
+            {
+                <MudSelectItem Value="@r.RoleId">@r.Name (@r.Code)</MudSelectItem>
+            }
+        </MudSelect>
+        <MudAutocomplete T="UserOption?" Label="User" @bind-Value="_assignUser"
+                         SearchFunc="SearchUsersAsync" ToStringFunc="@(u => u?.Label ?? "")"
+                         Variant="Variant.Outlined" Margin="Margin.Dense"
+                         Clearable="true" />
+        @if (!string.IsNullOrEmpty(_assignError))
+        {
+            <MudAlert Severity="Severity.Error" Dense="true" Class="mt-2">@_assignError</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _assignModalOpen = false)">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   Disabled="@(_assignRoleId == 0 || _assignUser is null || _saving)"
+                   OnClick="AssignRoleAsync">Assign</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [Parameter] public long EntityId { get; set; }
+
+    record WsDef(string Code, string Name, int StageCount, int ChecklistItemCount,
+                 List<StageInfo> Stages);
+    record StageInfo(string RoleName, bool IsFinal, bool IsLast);
+    record AssignmentRow(long AssignmentId, string RoleCode, string RoleName,
+                         long UserId, string UserDisplayName, string UserUpn);
+    record AuditRow(string Action, string ActorName, DateTime OccurredAtUtc);
+    record RoleOption(int RoleId, string Code, string Name);
+    record UserOption(long UserId, string Label);
+    record TemplateInfo(int Version, string? Notes);
+
+    private Data.Entities.Entity? _entity;
+    private TemplateInfo? _template;
+    private List<WsDef> _workstreamDefs = [];
+    private List<AssignmentRow> _assignments = [];
+    private List<AuditRow> _recentAudit = [];
+    private List<RoleOption> _availableRoles = [];
+
+    private bool _assignModalOpen, _saving;
+    private int _assignRoleId;
+    private UserOption? _assignUser;
+    private string _assignError = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _entity = await Db.Entities
+            .Include(e => e.EntityType)
+            .FirstOrDefaultAsync(e => e.EntityId == EntityId && !e.IsDeleted);
+
+        if (_entity is null) { Nav.NavigateTo("/admin/entities"); return; }
+
+        await LoadAllAsync();
+    }
+
+    private async Task LoadAllAsync()
+    {
+        // Template
+        var tmpl = await Db.WorkflowTemplates
+            .Where(t => t.EntityTypeId == _entity!.EntityTypeId && t.IsCurrent && !t.IsDeleted)
+            .FirstOrDefaultAsync();
+
+        if (tmpl is not null)
+        {
+            _template = new TemplateInfo(tmpl.Version, tmpl.Notes);
+            _workstreamDefs = await Db.WorkstreamDefs
+                .Where(d => d.WorkflowTemplateId == tmpl.WorkflowTemplateId)
+                .OrderBy(d => d.OrderIndex)
+                .Select(d => new WsDef(
+                    d.Code, d.Name,
+                    d.Stages.Count,
+                    d.Stages.SelectMany(s => s.ChecklistItems).Count(),
+                    d.Stages.OrderBy(s => s.OrderIndex)
+                        .Select((s, i) => new StageInfo(
+                            s.Role.Name,
+                            s.IsFinalApproval,
+                            i == d.Stages.Count - 1
+                        )).ToList()
+                ))
+                .ToListAsync();
+        }
+
+        // Assignments
+        _assignments = await Db.EntityRoleAssignments
+            .Where(a => a.EntityId == EntityId && !a.IsDeleted)
+            .Select(a => new AssignmentRow(
+                a.EntityRoleAssignmentId,
+                a.Role.Code, a.Role.Name,
+                a.UserId, a.User.DisplayName, a.User.Upn))
+            .OrderBy(a => a.RoleCode).ThenBy(a => a.UserDisplayName)
+            .ToListAsync();
+
+        // Recent audit
+        _recentAudit = await Db.AuditEvents
+            .Where(e => e.EntityId == EntityId)
+            .OrderByDescending(e => e.OccurredAtUtc)
+            .Take(15)
+            .Select(e => new AuditRow(e.Action, e.Actor.DisplayName, e.OccurredAtUtc))
+            .ToListAsync();
+
+        // Available roles
+        _availableRoles = await Db.Roles
+            .Where(r => !r.IsDeleted && r.IsActive)
+            .OrderBy(r => r.Name)
+            .Select(r => new RoleOption(r.RoleId, r.Code, r.Name))
+            .ToListAsync();
+    }
+
+    private void OpenAssignModal()
+    {
+        _assignRoleId = _availableRoles.FirstOrDefault()?.RoleId ?? 0;
+        _assignUser = null;
+        _assignError = string.Empty;
+        _assignModalOpen = true;
+    }
+
+    private async Task<IEnumerable<UserOption?>> SearchUsersAsync(string text, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return [];
+        return await Db.Users
+            .Where(u => !u.IsDeleted && u.IsActive
+                     && (u.DisplayName.Contains(text) || u.Upn.Contains(text)))
+            .Take(10)
+            .Select(u => new UserOption(u.UserId, $"{u.DisplayName} ({u.Upn})"))
+            .ToListAsync(ct);
+    }
+
+    private async Task AssignRoleAsync()
+    {
+        if (_assignUser is null || _assignRoleId == 0) return;
+        _assignError = string.Empty;
+        _saving = true;
+        try
+        {
+            var actorId  = await CurrentUser.GetUserIdAsync();
+            var actorOid = await CurrentUser.GetEntraObjectIdAsync();
+
+            // Check duplicate
+            var exists = await Db.EntityRoleAssignments.AnyAsync(a =>
+                a.EntityId == EntityId && a.RoleId == _assignRoleId
+                && a.UserId == _assignUser.UserId && !a.IsDeleted);
+            if (exists) { _assignError = "This user already holds that role on this entity"; return; }
+
+            var assignment = new EntityRoleAssignment
+            {
+                EntityId = EntityId, RoleId = _assignRoleId,
+                UserId = _assignUser.UserId,
+                AssignedAtUtc = DateTime.UtcNow, AssignedByUserId = actorId
+            };
+            Db.EntityRoleAssignments.Add(assignment);
+            await Db.SaveChangesAsync();
+
+            await Audit.WriteAsync(actorId, actorOid, "EntityRoleAssignment",
+                assignment.EntityRoleAssignmentId, "RoleAssigned",
+                after: new { EntityId, _assignRoleId, _assignUser.UserId },
+                entityId: EntityId);
+            await Db.SaveChangesAsync();
+
+            _assignModalOpen = false;
+            Snackbar.Add("Role assigned", Severity.Success);
+            await LoadAllAsync();
+        }
+        catch (Exception ex) { _assignError = ex.Message; }
+        finally { _saving = false; }
+    }
+
+    private async Task RemoveAssignmentAsync(AssignmentRow row)
+    {
+        var actorId  = await CurrentUser.GetUserIdAsync();
+        var actorOid = await CurrentUser.GetEntraObjectIdAsync();
+        var a = await Db.EntityRoleAssignments
+            .SingleAsync(x => x.EntityRoleAssignmentId == row.AssignmentId);
+        a.IsDeleted = true;
+        a.DeletedAtUtc = DateTime.UtcNow;
+        a.DeletedByUserId = actorId;
+        await Audit.WriteAsync(actorId, actorOid, "EntityRoleAssignment",
+            a.EntityRoleAssignmentId, "RoleUnassigned",
+            before: new { row.RoleCode, row.UserDisplayName }, entityId: EntityId);
+        await Db.SaveChangesAsync();
+        Snackbar.Add("Assignment removed", Severity.Info);
+        await LoadAllAsync();
+    }
+
+    private static string GetInitials(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2
+            ? $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant()
+            : name.Length >= 2 ? name[..2].ToUpperInvariant() : name.ToUpperInvariant();
+    }
+}
