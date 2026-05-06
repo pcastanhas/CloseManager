@@ -24,6 +24,20 @@ OrderIndex 0 is always the preparer; subsequent indices are reviewers in chain o
 
 The status enum simplifies as a result: `Submitted` and `InReview` collapse into `InProgress` plus the stage pointer. "Where in the flow is this workstream?" is answered by `CurrentStageIndex`, not by parsing distinct status values per stage.
 
+## Why explicit final-approval flag rather than "highest OrderIndex wins"
+
+`WorkstreamDefStage.IsFinalApproval` and `WorkstreamStage.IsFinalApproval` mark the stage whose approval transitions the workstream to `Approved`. The alternative — "the last stage in the chain is always final" — is simpler but less flexible.
+
+The explicit flag lets some workflows have an approver whose role is informational or pro-forma rather than gating completion. It also makes the system's behavior obvious: instead of the application code computing "max(OrderIndex)" implicitly, the schema says exactly which stage closes the workstream.
+
+Exactly one Review-kind stage per workstream must be marked final, enforced at the application layer (with a periodic integrity job catching drift). A CHECK constraint can't cleanly express "exactly one true per parent."
+
+## Why per-stage stuck thresholds
+
+Treasury reviews are quick (cash recs are routine); Senior reviews take longer (they're holistic and may involve cross-tie work). A single workstream-level stuck threshold would either flag Treasury too late or flag Senior too early.
+
+`WorkstreamDefStage.StuckThresholdHours` (and the snapshot `WorkstreamStage.StuckThresholdHours`) lets each approver have its own threshold. NULL means "use system default" (configured in Settings). The Active Workflows page reads the per-stage value when computing "stuck > Xh" matches.
+
 ## Why checklist items are scoped to a stage
 
 Each stage in the chain verifies different things. Treasury verifies cash tie-out and bank reconciliation; Senior verifies overall reasonableness and cross-tie to financials. Forcing both to share one checklist would either make Treasury's checklist contain Senior's items (which Treasury can't know about) or make it incomplete.

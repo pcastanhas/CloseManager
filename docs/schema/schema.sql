@@ -129,9 +129,13 @@ CREATE TABLE WorkstreamDef (
 );
 
 -- Ordered list of stages per WorkstreamDef. OrderIndex 0 is always the
--- preparer; subsequent indexes are reviewers in chain order. Two-stage
--- (Preparer → Reviewer) and N-stage (Preparer → A → B → C) are both
--- naturally expressed.
+-- preparer; subsequent indexes are reviewers (approvers) in chain order.
+-- Two-stage (Preparer → Approver) and N-stage (Preparer → A → B → C) are
+-- both naturally expressed.
+--
+-- IsFinalApproval marks the stage whose approval transitions the workstream
+-- to Approved. Exactly one stage with StageKind='Review' should be marked
+-- final per WorkstreamDef (enforced at application layer + integrity job).
 CREATE TABLE WorkstreamDefStage (
     WorkstreamDefStageId    bigint IDENTITY PRIMARY KEY,
     WorkstreamDefId         bigint NOT NULL REFERENCES WorkstreamDef(WorkstreamDefId),
@@ -139,6 +143,8 @@ CREATE TABLE WorkstreamDefStage (
     RoleId                  int NOT NULL REFERENCES [Role](RoleId),
     StageKind               varchar(20) NOT NULL,      -- 'Prepare' | 'Review'
     DisplayName             nvarchar(100) NULL,        -- optional override (e.g. "Treasury sign-off")
+    IsFinalApproval         bit NOT NULL DEFAULT 0,    -- exactly one Review stage per def is final
+    StuckThresholdHours     int NULL,                  -- per-stage override; NULL uses system default
     RowVersion              rowversion NOT NULL,
     CONSTRAINT UQ_WorkstreamDefStage UNIQUE (WorkstreamDefId, OrderIndex)
 );
@@ -239,6 +245,9 @@ CREATE INDEX IX_Workstream_LockExpiry
 --
 -- Per-stage timestamps and outcome live here so each stage has its own
 -- lifecycle visible in the audit trail.
+--
+-- IsFinalApproval and StuckThresholdHours are snapshots; changes to the
+-- template after instantiation don't propagate without an explicit rebuild.
 CREATE TABLE WorkstreamStage (
     WorkstreamStageId       bigint IDENTITY PRIMARY KEY,
     WorkstreamId            bigint NOT NULL REFERENCES Workstream(WorkstreamId),
@@ -247,6 +256,8 @@ CREATE TABLE WorkstreamStage (
     RoleId                  int NOT NULL,                -- snapshot of stage role
     StageKind               varchar(20) NOT NULL,        -- 'Prepare' | 'Review'
     DisplayName             nvarchar(100) NULL,
+    IsFinalApproval         bit NOT NULL DEFAULT 0,      -- snapshot
+    StuckThresholdHours     int NULL,                    -- snapshot; NULL = use system default
 
     -- Per-stage lifecycle. Reset to NULL on rewind (NeedsRevision).
     EnteredAtUtc            datetime2(3) NULL,           -- when CurrentStageIndex first reached this row

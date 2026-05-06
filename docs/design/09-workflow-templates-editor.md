@@ -77,45 +77,46 @@ Each workstream's collapsed view shows:
 - Display number ("1.", "2.") computed from order
 - Display name and immutable-after-publish code (CASH, DEBT_SVC, etc.)
 - "edited" badge if changed in this version, "new in vN" badge if newly added
-- **Stage chain pills**: a single line with each stage's role rendered as a pill, separated by arrows (`Preparer → Asset Mgr → Senior`). Reads in one line, scannable across the workstream list.
-- Stage count and total checklist item count
-- Expand/collapse toggle and delete button
+- Summary line: "N approvers · M checklist items"
+- Edit and delete buttons on the right
 
-The stage chain pills in the header are read-only — full chain editing happens in the expanded view.
+### Approver cards (indented under each workstream)
 
-### Expanded view: two sections
+Each approver is its own card, indented inside the workstream. Approvers render in chain order with `A1`, `A2`, `A3` indices (the preparer is implicit and not shown as a card — every workstream has a Preparer; there's nothing to configure there).
 
-When a workstream is expanded, the body splits into two sections:
+Each approver card shows in-line, without expansion:
 
-**1. Approval chain** (top section)
+- Drag handle for reordering within the workstream
+- Approver index (A1, A2, ...)
+- Role name (or display-name override)
+- Summary line: "N checklist items · stuck after Xh"
+- "advances" or "final" badge: "advances" for non-final approvers (work moves on after they approve), "final" for the approver whose approval marks the workstream complete
+- "new in vN" / "edited" badges as relevant
+- Edit button (opens the modal described below)
 
-The ordered list of stages that work moves through. Each stage row has:
+Approver cards are visually distinct from workstream cards — a teal/green tint and border so the parent-child relationship is obvious without indentation alone.
 
-- Drag handle for reordering stages
-- Stage index (0, 1, 2 — read-only)
-- Stage kind (`Prepare` for stage 0, `Review` for all others — auto-determined, not editable)
-- Role picker (dropdown of system roles)
-- Optional display name (e.g., "Treasury sign-off") that overrides the role name in the UI
-- Delete button (disabled on stage 0; preparer is required)
+### Edit Approver modal
 
-An "Add stage" button at the bottom of the chain appends a new Review stage. New stages default to a placeholder role until the admin picks one.
+Clicking Edit on an approver card opens a focused modal containing all of that approver's configuration. The main editor canvas stays scannable; depth lives behind clicks.
 
-Stage 0 is always present, always Prepare, always required. Admins can't delete it or change its kind.
+The modal contains:
 
-**2. Default checklists by stage** (bottom section)
+- **Approver role** (dropdown of system roles)
+- **Display name** (optional override; e.g., "Treasury sign-off" instead of "Treasury-RE")
+- **Stuck threshold** (number + "hours" unit; default value pre-filled from system setting; helper text explains how it's used by Active Workflows)
+- **Final approval** (checkbox; helper text explains "Exactly one approver per workstream must be marked final.")
+- **Default checklist items** (inline-editable list with drag handles for reorder, Add button at bottom)
 
-One checklist block per reviewer stage (stages 1+). Stage 0 has no checklist of its own — the preparer uses stage 1's checklist as a prep guide at runtime.
+Footer: Delete approver button on the left (with confirmation), Cancel and Save on the right.
 
-Each checklist block has a heading showing the stage index and display name (e.g., "1 · Asset review"), with the items listed indented below. Each item:
+### Final approval semantics
 
-- Drag handle for reordering within the stage
-- Item text (clickable to edit inline)
-- Delete button
-- Add button at the bottom of each block
+Exactly one Review-kind stage per workstream must be marked Final. The approver whose `IsFinalApproval` is true is the one whose approval transitions the workstream from `InProgress` to `Approved`. Earlier approvers in the chain are gates that advance the workstream; their approval doesn't end the chain.
 
-Items added in the current draft are tinted green with an "Added in v4" sub-label.
+In practice the final approver is usually the last in the chain (highest OrderIndex), but the model permits other configurations (e.g., a Senior approval marks complete while a CFO approver later in the chain is informational).
 
-The checklists stack vertically — all stages visible at once. This works because admins authoring templates think holistically about the chain. (At runtime, reviewers see only their own stage's checklist; that uses tabs, not stacking.)
+If an admin attempts to save the modal with Final checked while another approver in the same workstream is already final, the system asks "this will unset Final on {other approver}, OK?" rather than silently swapping. If an admin saves with no approver marked Final, the system shows a validation error blocking save.
 
 ### Workstream codes are editable in drafts
 
