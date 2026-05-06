@@ -48,17 +48,28 @@ The preparer (stage 0) is a special case: they see the *first reviewer's* checkl
 
 ## How NeedsRevision rewinds the stage chain
 
-When a reviewer at stage N sends a workstream back, they pick a target stage M < N. The rewind:
+The send-back model is deliberately simple: a reviewer can only send work back one step. There is no target-stage picker.
 
-- Sets `Workstream.CurrentStageIndex = M`
-- Sets `Workstream.Status = 'NeedsRevision'`
-- Marks `WorkstreamStage` rows for indices M..N as rolled-back (Outcome cleared, timestamps preserved for audit)
-- Increments `Workstream.Round` only if M = 0 (back to preparer)
-- Writes an audit event capturing the chosen target
+When a reviewer at stage N presses "Needs revision":
 
-The default target is N-1 (the immediately previous stage), but the reviewer can pick stage 0 for "redo from scratch" cases. The `WorkstreamStage.RewoundToStageIndex` column captures the chosen target on the row that initiated the rewind.
+- `Workstream.CurrentStageIndex` decrements by 1 (N → N-1)
+- `Workstream.Status` is set to `'NeedsRevision'`
+- `Workstream.Round` increments by 1
+- The `WorkstreamStage` row for stage N has its `Outcome` set to `'SentBack'` and timestamps recorded
+- The `WorkstreamStage` row for stage N-1 has its `Outcome`, `CompletedAtUtc`, and `CompletedByUserId` cleared so it is ready to be re-entered
+- A `SentBack` audit event is written
 
-`Round` only counts how many times stage 0 has submitted, so a workstream bouncing between stages 1 and 2 without involving the preparer doesn't increment Round.
+When the person at stage N-1 acts (submits if at stage 0, or presses "Approve" if at a review stage):
+
+- `Workstream.CurrentStageIndex` increments by 1
+- `Workstream.Status` returns to `'InProgress'`
+- The chain continues forward as normal from that point
+
+`Round` increments on every send-back, not just when work reaches stage 0. This gives a true count of how many times any reviewer pushed back, which is more useful for the "Round ≥ 4" attention condition in Active Workflows.
+
+Stage 0 (Preparer) has no "Needs revision" button — there is nowhere further back to go. The only actions at stage 0 are Submit (advances to stage 1) and discard/cancel.
+
+`RewoundToStageIndex` has been removed from the schema. One-step-only send-back makes it redundant, and its absence simplifies both the stored procedure and the audit trail.
 
 ## Why templates are versioned
 

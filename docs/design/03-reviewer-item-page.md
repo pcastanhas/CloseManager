@@ -82,7 +82,7 @@ The action button at the top of the screen replaces the original "Approve" butto
 
 In both cases, the button is locked until all of the *current stage's* checklist items are Approved. The lock isn't a UI nuisance — it's the structural rule that makes the whole design work. The button shows a count: "Advance · 2 left" or "Finalize · 2 left" tells the reviewer exactly what's between them and done.
 
-A second action — **Send back** — sits next to the primary advance/finalize button. This is the rewind path, described below.
+A second action — **Needs revision** — sits next to the primary advance/finalize button. This is the one-step send-back path, described below.
 
 The reason for distinct verbs (advance vs finalize) is informational: at a non-final stage, the reviewer's mental model is "I'm signing off so the next person can do their part." At the final stage, the mental model is "this close is done for this workstream." Same lock rule, different post-state, different verb.
 
@@ -94,15 +94,7 @@ In the original two-stage design, "needs revision" had only one possible destina
 
 ### Send-back dialog
 
-Clicking **Send back** opens a small dialog:
 
-- **Target stage** — radio group listing stages 0 through N-1, defaulted to N-1 (the immediately previous stage). Each option labels the stage role and last actor name: "Stage 1 · Treasury (Erin)" / "Stage 0 · Preparer (Maya)".
-- **Reason / message** — required text field. This becomes the comment that anchors to the originating concern; if no specific item is flagged on the current stage, this is a workstream-level comment.
-- **Action buttons** — Cancel and Send back.
-
-The default of N-1 reflects the common case (immediately previous stage). The radio group exposes the longer-rewind option without making it the path of least resistance — sending back further is a deliberate choice that should require a click.
-
-After confirmation, `sp_SendBackToStage` runs: stage N's row gets `Outcome = 'SentBack'` and `RewoundToStageIndex = M`; the workstream's `CurrentStageIndex` moves to M; status flips to `NeedsRevision`. The lock releases. The chosen-stage user (Erin or Maya, depending) sees the workstream return to their queue.
 
 ### When does Round increment?
 
@@ -114,7 +106,7 @@ This matches what the round count is *for*: it tells the reviewer "this is the t
 
 A two-stage workstream's happy path is six events: Instantiated, Started, Submitted, LockAcquired (Treasury), All items approved, Approved. Easy to render as a horizontal strip.
 
-A three-stage workstream's happy path is eight events. Add one round of revision and it's twelve. Add a stage-2-back-to-stage-0 rewind and it's sixteen. The strip can't show all of these inline without becoming illegible.
+A three-stage workstream's happy path is eight events. Add one round of revision and it's twelve. Add a stage-2-back-to-stage-1 send-back and it's sixteen. The strip can't show all of these inline without becoming illegible.
 
 ### Two display modes
 
@@ -141,7 +133,7 @@ The strip surfaces these event types from `AuditEvent.Action`:
 - `Instantiated`, `StatusChanged` (NotStarted → InProgress), `FileUploaded`, `Submitted` (stage 0 → stage 1)
 - `LockAcquired` per stage (compact mode rolls these up into "started by {actor}")
 - `ReviewerApproved`, `ReviewerFlagged` per checklist item (compact mode shows aggregate count: "4 approved, 1 flagged")
-- `StageAdvanced`, `SentBack` (with target stage)
+- `StageAdvanced`, `SentBack` (always one step back; reason captured in Notes)
 - `Approved` (final stage transition), `Rebuilt`
 
 Comments are *not* events on the timeline — they're attached to checklist items, visible in the right pane. Putting them on the timeline doubled the event count without adding clarity in the original two-stage design; the principle stays.
@@ -158,7 +150,7 @@ When expanded, the accordion shows a read-only view of that stage's checklist:
 - Comments attached to those items, in chronological order
 - A small badge on items that were flagged at some point ("flagged in round 1") so the current reviewer can see what almost went wrong
 
-Read-only is the operative word: David at stage 2 cannot un-approve Treasury's items, can't add comments to them, can't change their state. If David has a concern about something Treasury approved, his option is to **send back to stage 1** with a comment explaining why he wants Treasury to re-verify. He doesn't reach into stage 1's data; he reroutes the workflow.
+Read-only is the operative word: David at stage 2 cannot un-approve Treasury's items, can't add comments to them, can't change their state. If David has a concern about something Treasury approved, his option is to press **Needs revision** — this sends back to stage 1 (Treasury) with a required reason comment explaining why he wants Treasury to re-verify. He doesn't reach into stage 1's data; he reroutes the workflow.
 
 The accordion is collapsed by default because most stage-2 reviewers don't need to re-read stage 1's verifications every time — they trust them, and the accordion is there for the cases when they want context. On a workstream that's been around the loop a few times, the accordion is also where the audit story is most legible.
 
@@ -199,6 +191,6 @@ For the rare case where a screenshot would help ("here's what I was seeing in v3
 
 ## A note on the same component for every stage
 
-The reviewer item page is one Blazor component, parameterized by `WorkstreamId` and rendered for whichever user has the workstream open. The differences between stages — checklist scope, button labels, send-back targets, accordion contents — derive from the workstream's `CurrentStageIndex` and the joined `WorkstreamStage` row, not from a separate "stage 1 page" / "stage 2 page" / "final page" component.
+The reviewer item page is one Blazor component, parameterized by `WorkstreamId` and rendered for whichever user has the workstream open. The differences between stages — checklist scope, button labels, accordion contents — derive from the workstream's `CurrentStageIndex` and the joined `WorkstreamStage` row, not from a separate "stage 1 page" / "stage 2 page" / "final page" component. Send-back is always one step (N-1); no branching logic needed.
 
 This is enforced by the data model: there is no "reviewer 1 view" vs "reviewer 2 view" concept in the schema. Every reviewer sees the workstream through the same lens, with their stage-specific data filtering applied at query time. The component is dumb about how many stages exist; the schema tells it.

@@ -344,70 +344,59 @@ COMMIT;
 The schema supports rewinding to any earlier stage. Erin chooses stage 0 (back to preparer) since the issue is a calculation question Maya needs to address. The stored procedure parameterizes the target stage; the UI defaults to `CurrentStageIndex - 1` but lets the reviewer pick.
 
 ```sql
--- Body of sp_SendBackToStage(@WorkstreamId, @TargetStageIndex, @UserId, @Reason)
+-- Body of sp_SendBackToStage(@WorkstreamId, @UserId, @Reason)
+-- Send-back always goes exactly one step back (CurrentStageIndex--).
+-- No target-stage parameter: the destination is always N-1.
+-- Stage 0 (Preparer) cannot call this procedure -- the UI has no send-back button at stage 0.
 BEGIN TRAN;
 
--- Validate target is a strict ancestor of the current stage
-DECLARE @CurStage int;
-SELECT @CurStage = CurrentStageIndex FROM Workstream
+DECLARE @CurStage int, @Round int;
+SELECT @CurStage = CurrentStageIndex, @Round = Round
+FROM Workstream
 WHERE WorkstreamId = @WorkstreamId AND Status = 'InProgress' AND IsDeleted = 0;
 
-IF @CurStage IS NULL OR @TargetStageIndex >= @CurStage OR @TargetStageIndex < 0 BEGIN
-    ROLLBACK; THROW 50003, 'Invalid rewind target', 1;
-END;
+IF @CurStage IS NULL BEGIN ROLLBACK; THROW 50003, 'Workstream not InProgress', 1; END;
+IF @CurStage = 0 BEGIN ROLLBACK; THROW 50004, 'Cannot send back from stage 0', 1; END;
 
--- Stamp the rewinding stage with its outcome.
--- Preserve EnteredAtUtc / StartedAtUtc / CompletedAtUtc for audit;
--- record the rewind target on this row to capture intent.
+DECLARE @TargetStage int = @CurStage - 1;
+
+-- Stamp the sending stage with its outcome; preserve timestamps for audit.
 UPDATE WorkstreamStage
 SET CompletedAtUtc = SYSUTCDATETIME(),
     CompletedByUserId = @UserId,
-    Outcome = 'SentBack',
-    RewoundToStageIndex = @TargetStageIndex
+    Outcome = 'SentBack'
 WHERE WorkstreamId = @WorkstreamId AND OrderIndex = @CurStage;
 
--- For any intermediate stages between target and current (exclusive of both),
--- clear Outcome since they are about to be re-entered. Keep their timestamps
--- for audit. (No intermediate stages in this example since @TargetStageIndex=0
--- and @CurStage=1, but the pattern matters for longer chains.)
+-- Clear the target stage's prior Outcome/CompletedAt so it re-enters cleanly.
+-- EnteredAtUtc and StartedAtUtc are preserved for audit history of the prior visit.
 UPDATE WorkstreamStage
 SET Outcome = NULL,
     CompletedAtUtc = NULL,
     CompletedByUserId = NULL
-WHERE WorkstreamId = @WorkstreamId
-  AND OrderIndex > @TargetStageIndex
-  AND OrderIndex < @CurStage;
+WHERE WorkstreamId = @WorkstreamId AND OrderIndex = @TargetStage;
 
--- Clear stage-target's prior CompletedAt/Outcome (it's about to be active again);
--- preserve EnteredAtUtc + StartedAtUtc for audit history of the prior visit.
-UPDATE WorkstreamStage
-SET Outcome = NULL,
-    CompletedAtUtc = NULL,
-    CompletedByUserId = NULL
-WHERE WorkstreamId = @WorkstreamId
-  AND OrderIndex = @TargetStageIndex;
-
--- Move the workstream pointer back; status flips to NeedsRevision; release lock.
+-- Decrement stage pointer; increment Round; flip Status; release lock.
 UPDATE Workstream
 SET Status = 'NeedsRevision',
-    CurrentStageIndex = @TargetStageIndex,
+    CurrentStageIndex = @TargetStage,
+    Round = Round + 1,
     LockedByUserId = NULL, LockedAtUtc = NULL, LockExpiresAtUtc = NULL
 WHERE WorkstreamId = @WorkstreamId AND Status = 'InProgress';
 
 INSERT INTO AuditEvent (...)
 VALUES (@UserId, '...', 'Workstream', @WorkstreamId,
         @WorkstreamId, '202510', 42, 'SentBack',
-        '{"fromStage": <CurStage>, "round": <Round>}',
-        '{"toStage": <TargetStageIndex>, "reason": <Reason>}');
+        '{"fromStage": ' + CAST(@CurStage AS varchar) + ', "toStage": ' + CAST(@TargetStage AS varchar) + ', "round": ' + CAST(@Round + 1 AS varchar) + ', "reason": "' + @Reason + '"}');
 
 COMMIT;
 ```
 
-A few things worth noting about the rewind contract:
+A few things worth noting about the send-back contract:
 
-- **`RewoundToStageIndex` is set on the stage row that initiated the rewind**, not on the rewind target. This captures "the reviewer at stage N decided to send to stage M" — important for audit and for understanding rewind patterns over time.
-- **Per-stage timestamps are preserved**, even though `Outcome` is cleared. The audit log + the preserved timestamps + `RewoundToStageIndex` together reconstruct what happened. The schema convention is that `WorkstreamStage` reflects current state (not a complete history) — current state means "Outcome is null on stages from target through current; Outcome is set on completed earlier-visit stages." History is in `AuditEvent`.
-- **Round is not yet incremented.** Round counts stage-0 submissions; the increment happens on Maya's *resubmission* in Step 9, not on this rewind.
+- **Send-back is always one step (N-1).** There is no target-stage parameter. The destination is always `CurrentStageIndex - 1`. This keeps the procedure simple and the UI unambiguous.
+- **Round increments on every send-back**, not just when work reaches stage 0. `Round` is now a true count of how many times any reviewer pushed back — more useful for the "Round ≥ 4" attention condition in Active Workflows.
+- **Per-stage timestamps are preserved** even though `Outcome` is cleared on the target stage. The audit log + preserved timestamps reconstruct what happened. `WorkstreamStage` reflects current state; `AuditEvent` carries full history.
+- **`RewoundToStageIndex` has been removed from the schema.** One-step-only send-back makes it redundant.
 
 The flagged checklist item stays in `ReviewerStatus = 'NeedsRevision'` — it doesn't reset to `Pending`. When Maya looks at the workstream, that item carries Erin's flag and comment.
 
@@ -459,11 +448,11 @@ SET CompletedAtUtc = SYSUTCDATETIME(),
     Outcome = 'Advanced'
 WHERE WorkstreamId = 5042 AND OrderIndex = 0;
 
--- Advance pointer; bump Round; flip Status back to InProgress.
+-- Advance pointer; flip Status back to InProgress.
+-- Round was already incremented when Erin pressed 'Needs revision' in Step 8.
 UPDATE Workstream
 SET Status = 'InProgress',
     CurrentStageIndex = 1,
-    Round = Round + 1,
     LockedByUserId = NULL, LockedAtUtc = NULL, LockExpiresAtUtc = NULL
 WHERE WorkstreamId = 5042 AND Status = 'NeedsRevision';
 
@@ -474,7 +463,7 @@ SET EnteredAtUtc = SYSUTCDATETIME()
 WHERE WorkstreamId = 5042 AND OrderIndex = 1;
 
 INSERT INTO AuditEvent (...)
-VALUES (12, ..., 'Resubmitted', '{"round": 2, "fromStage": 0, "toStage": 1}');
+VALUES (12, ..., 'Resubmitted', '{"round": ' + CAST(Round AS varchar) + ', "fromStage": 0, "toStage": 1}');
 
 COMMIT;
 ```
@@ -863,8 +852,8 @@ The application layer (Blazor Server) calls these procedures rather than issuing
 A few patterns specific to the multi-stage refactor:
 
 - **Resolve the current stage row by joining `Workstream` to `WorkstreamStage ON OrderIndex = CurrentStageIndex`.** This pattern appears in lock acquisition, advance, send-back, final-approval — every place that asks "what is the active stage's role / threshold / final flag." Worth extracting as a SQL helper view if it gets repetitive.
-- **`Round` only increments on stage-0 submissions** (Step 9). Bouncing between stages 1 and N in either direction does not increment `Round`. This matches the user-facing meaning of "rounds": "how many times has the preparer had to take it back."
-- **`RewoundToStageIndex` is set on the stage that initiated the rewind**, not the rewind target. This is the key audit signal for "the reviewer at stage 2 made the call to send to stage 0."
+- **`Round` increments on every send-back** (Step 8), not on advance/resubmit. This gives a true count of how many times any reviewer pushed back, which drives the "Round ≥ 4" attention condition in Active Workflows.
+- **`RewoundToStageIndex` has been removed.** Send-back is always one step (N-1); the audit event's `fromStage`/`toStage` fields capture direction without a dedicated column.
 - **`IsFinalApproval` distinguishes `sp_AdvanceStage` from `sp_ApproveFinal`.** They are separate procedures because the post-condition differs (advance pointer vs. transition to Approved). The application layer chooses which to call by reading the current stage's `IsFinalApproval` flag.
 - **Per-stage timestamps are reset on rewind** for stages from target through current (`StartedAtUtc`, `CompletedAtUtc`, `Outcome` cleared); `EnteredAtUtc` is preserved for audit. The schema column comments describe this as "Reset to NULL on rewind"; the design decision is that `WorkstreamStage` reflects current state, with `AuditEvent` carrying full history.
 

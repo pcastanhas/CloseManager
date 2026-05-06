@@ -40,12 +40,15 @@ Two things this enables:
 The Dashboard shows every workstream where the current user holds *any* role assignment on the entity that maps to *any stage* of that workstream. The size of a user's Dashboard is purely a function of how many entity-role rows they have intersected with which stages those roles appear in:
 
 ```sql
+-- Dashboard visibility: all workstreams for entities where the user has ANY role assignment.
+-- Visibility flows from EntityRoleAssignment.EntityId alone -- not through WorkstreamStage.
+-- This means a CFO assigned to all entities but present in no stage chain sees the full
+-- portfolio and never acquires a lock (lock acquisition separately requires the role to
+-- match the current stage's RoleId).
 SELECT DISTINCT w.*
 FROM Workstream w
-INNER JOIN WorkstreamStage ws ON ws.WorkstreamId = w.WorkstreamId AND ws.IsDeleted = 0
 INNER JOIN EntityRoleAssignment era
     ON era.EntityId = w.EntityId
-   AND era.RoleId = ws.RoleId
    AND era.UserId = @UserId
    AND era.IsDeleted = 0
 WHERE w.IsDeleted = 0;

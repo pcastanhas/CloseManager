@@ -282,7 +282,6 @@ CREATE TABLE WorkstreamStage (
     CompletedAtUtc          datetime2(3) NULL,           -- when stage outcome was set
     CompletedByUserId       bigint NULL REFERENCES [User](UserId),
     Outcome                 varchar(20) NULL,            -- 'Advanced' | 'SentBack'
-    RewoundToStageIndex     int NULL,                    -- if Outcome='SentBack', which stage was the target
 
     IsDeleted               bit NOT NULL DEFAULT 0,
     DeletedAtUtc            datetime2(3) NULL,
@@ -458,3 +457,35 @@ CREATE INDEX IX_AuditEvent_Target
     ON AuditEvent(TargetTable, TargetId, OccurredAtUtc);
 CREATE INDEX IX_AuditEvent_Period
     ON AuditEvent(Period, OccurredAtUtc);
+
+
+-- =============================================================================
+-- Application settings (key/value store)
+-- =============================================================================
+-- Admin-managed configuration values. Seeded at deployment with defaults.
+-- All values are nvarchar; application layer parses to appropriate type.
+-- Sensitive values (SharePoint.ClientSecret) should be stored encrypted
+-- at rest via SQL Server column encryption or moved to Azure Key Vault
+-- in a future hardening pass.
+
+CREATE TABLE AppSetting (
+    AppSettingId        int IDENTITY PRIMARY KEY,
+    [Key]               nvarchar(100) NOT NULL UNIQUE,
+    [Value]             nvarchar(1000) NULL,
+    Description         nvarchar(500) NULL,
+    IsSecret            bit NOT NULL DEFAULT 0,     -- hint to UI: mask value in display
+    UpdatedAtUtc        datetime2(3) NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedByUserId     bigint NULL REFERENCES [User](UserId),
+    RowVersion          rowversion NOT NULL
+);
+
+-- Seed values (run after CREATE TABLE at deployment)
+INSERT INTO AppSetting ([Key], [Value], Description, IsSecret) VALUES
+('StuckThreshold.Default',    '24',   'Hours before a workstream at any stage is flagged as stuck in Active Workflows. Per-stage overrides on WorkstreamDefStage.StuckThresholdHours take precedence.', 0),
+('Lock.DurationMinutes',      '15',   'Minutes before an inactive lock auto-expires. The Hangfire lock-expiry sweep runs every 2 minutes and clears locks past this threshold.', 0),
+('Period.CloseConfirmPhrase', 'close period', 'Phrase the admin must type verbatim to confirm closing a period. Case-insensitive match.', 0),
+('SharePoint.TenantId',       NULL,   'Entra tenant ID (GUID) for Microsoft Graph authentication.', 0),
+('SharePoint.ClientId',       NULL,   'App registration client ID (GUID) for Microsoft Graph. Requires Sites.Selected permission on the target SharePoint site.', 0),
+('SharePoint.ClientSecret',   NULL,   'App registration client secret for Microsoft Graph. Treat as a credential — IsSecret=1.', 1),
+('SharePoint.SiteId',         NULL,   'SharePoint site ID for the document library. Obtain via Graph: GET /sites/{hostname}:/{site-path}', 0),
+('SharePoint.DriveId',        NULL,   'SharePoint document library drive ID. Obtain via Graph: GET /sites/{siteId}/drives', 0);
