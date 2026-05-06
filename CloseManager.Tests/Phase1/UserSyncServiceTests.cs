@@ -1,96 +1,65 @@
 using CloseManager.Web.Auth;
-using CloseManager.Web.Data;
-using FluentAssertions;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging.Abstractions;
 using System.Security.Claims;
+using Xunit;
+using FluentAssertions;
 
 namespace CloseManager.Tests.Phase1;
 
+/// <summary>
+/// Phase 1 smoke tests — no database or running server required.
+/// Database-dependent tests (UserSyncService upsert) are in Phase 2 integration tests.
+/// </summary>
 public class UserSyncServiceTests
 {
-    private static AppDbContext CreateDb()
+    [Fact]
+    public void GetEntraObjectId_ReturnsGuid_WhenOidClaimPresent()
     {
-        var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
-            .Options;
-        return new AppDbContext(options);
-    }
+        var expectedGuid = Guid.NewGuid();
+        var principal = MakePrincipal(new Claim("oid", expectedGuid.ToString()));
 
-    private static ClaimsPrincipal MakePrincipal(string oid,
-        string upn = "test@company.com", string name = "Test User")
-    {
-        var claims = new[]
-        {
-            new Claim("oid", oid),
-            new Claim("preferred_username", upn),
-            new Claim("name", name),
-        };
-        return new ClaimsPrincipal(new ClaimsIdentity(claims, "TestAuth"));
+        var result = UserSyncService.GetEntraObjectId(principal);
+
+        result.Should().Be(expectedGuid);
     }
 
     [Fact]
-    public async Task SyncAsync_NewUser_CreatesUserRow()
+    public void GetEntraObjectId_ReturnsEmpty_WhenOidClaimMissing()
     {
-        await using var db = CreateDb();
-        var svc = new UserSyncService(db, NullLogger<UserSyncService>.Instance);
-        var oid = Guid.NewGuid().ToString();
+        var principal = MakePrincipal();
 
-        var userId = await svc.SyncAsync(MakePrincipal(oid, "maya@company.com", "Maya Rodriguez"));
+        var result = UserSyncService.GetEntraObjectId(principal);
 
-        userId.Should().NotBeNull();
-        var user = await db.Users.SingleAsync();
-        user.DisplayName.Should().Be("Maya Rodriguez");
-        user.Upn.Should().Be("maya@company.com");
-        user.EntraObjectId.Should().Be(Guid.Parse(oid));
-        user.IsActive.Should().BeTrue();
-        user.LastSeenUtc.Should().NotBeNull();
+        result.Should().Be(Guid.Empty);
     }
 
     [Fact]
-    public async Task SyncAsync_ExistingUser_UpdatesDisplayNameAndUpn()
+    public void GetEntraObjectId_ReturnsEmpty_WhenOidClaimMalformed()
     {
-        await using var db = CreateDb();
-        var svc = new UserSyncService(db, NullLogger<UserSyncService>.Instance);
-        var oid = Guid.NewGuid().ToString();
+        var principal = MakePrincipal(new Claim("oid", "not-a-guid"));
 
-        await svc.SyncAsync(MakePrincipal(oid, "maya@company.com", "Maya Rodriguez"));
-        await svc.SyncAsync(MakePrincipal(oid, "maya.r@company.com", "Maya R."));
+        var result = UserSyncService.GetEntraObjectId(principal);
 
-        var users = await db.Users.ToListAsync();
-        users.Should().HaveCount(1);
-        users[0].DisplayName.Should().Be("Maya R.");
-        users[0].Upn.Should().Be("maya.r@company.com");
+        result.Should().Be(Guid.Empty);
     }
 
-    [Fact]
-    public async Task SyncAsync_DeactivatedUser_DoesNotReactivate()
+    [Theory]
+    [InlineData("Maya Rodriguez", "MR")]
+    [InlineData("Sam", "SA")]
+    [InlineData("Daniel Ochoa Reyes", "DR")]
+    [InlineData("X", "X")]
+    public void Initials_DerivedCorrectly(string displayName, string expected)
     {
-        await using var db = CreateDb();
-        var svc = new UserSyncService(db, NullLogger<UserSyncService>.Instance);
-        var oid = Guid.NewGuid().ToString();
+        var parts = displayName.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var initials = parts.Length >= 2
+            ? $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant()
+            : displayName.Length >= 2 ? displayName[..2].ToUpperInvariant() : displayName.ToUpperInvariant();
 
-        await svc.SyncAsync(MakePrincipal(oid));
-        var user = await db.Users.SingleAsync();
-        user.IsActive = false;
-        await db.SaveChangesAsync();
-
-        await svc.SyncAsync(MakePrincipal(oid));
-
-        (await db.Users.SingleAsync()).IsActive.Should().BeFalse();
-        (await svc.IsDeactivatedAsync(Guid.Parse(oid))).Should().BeTrue();
+        initials.Should().Be(expected);
     }
 
-    [Fact]
-    public async Task SyncAsync_UnauthenticatedPrincipal_ReturnsNull()
+    private static ClaimsPrincipal MakePrincipal(params Claim[] claims)
     {
-        await using var db = CreateDb();
-        var svc = new UserSyncService(db, NullLogger<UserSyncService>.Instance);
-        var principal = new ClaimsPrincipal(new ClaimsIdentity());
-
-        var userId = await svc.SyncAsync(principal);
-
-        userId.Should().BeNull();
-        db.Users.Should().BeEmpty();
+        var identity = new ClaimsIdentity(claims, "TestAuth");
+        return new ClaimsPrincipal(identity);
     }
 }

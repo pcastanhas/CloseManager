@@ -1,126 +1,33 @@
-/* CloseManager — global styles
-   Visual principles: flat, minimal, no gradients, 0.5px borders, generous whitespace.
-   Two font weights only: 400 regular, 500 medium.
-   See docs/mockups/README.md for full style notes. */
+/* CloseManager app styles — MudBlazor overrides and shared utilities */
 
-html, body {
-    font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-size: 14px;
-    font-weight: 400;
-    background-color: #f5f5f3;
-    color: #1a1a1a;
-}
-
-/* No heavy font weights — keep everything at 400 or 500 */
-h1, h2, h3, h4, h5, h6,
-.mud-typography-h1, .mud-typography-h2, .mud-typography-h3,
-.mud-typography-h4, .mud-typography-h5, .mud-typography-h6 {
-    font-weight: 500 !important;
-}
-
-/* Flat cards — 0.5px border, no drop shadow */
-.mud-paper {
+.mud-drawer {
+    border-right: 0.5px solid var(--mud-palette-divider) !important;
     box-shadow: none !important;
-    border: 0.5px solid rgba(0, 0, 0, 0.12);
 }
 
-/* Sidebar nav items */
-.mud-nav-link {
-    font-size: 13px;
-    font-weight: 400;
-    border-radius: 6px;
-    margin: 1px 4px;
+.mud-appbar {
+    box-shadow: none !important;
 }
 
 .mud-nav-link.active {
-    font-weight: 500;
-    background-color: rgba(0, 0, 0, 0.06) !important;
+    background: rgba(24, 95, 165, 0.08) !important;
+    color: var(--mud-palette-primary) !important;
+    font-weight: 500 !important;
 }
 
-/* Status pill badges */
-.badge-success {
-    background-color: #eaf3de;
-    color: #3b6d11;
-    padding: 2px 8px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 500;
-    display: inline-flex;
-    align-items: center;
-}
-
-.badge-warning {
-    background-color: #faeeda;
-    color: #854f0b;
-    padding: 2px 8px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 500;
-    display: inline-flex;
-    align-items: center;
-}
-
-.badge-danger {
-    background-color: #fcebeb;
-    color: #a32d2d;
-    padding: 2px 8px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 500;
-    display: inline-flex;
-    align-items: center;
-}
-
-.badge-neutral {
-    background-color: #f1efe8;
-    color: #5f5e5a;
-    padding: 2px 8px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 500;
-    display: inline-flex;
-    align-items: center;
-}
-
-.badge-info {
-    background-color: #e6f1fb;
-    color: #185fa5;
-    padding: 2px 8px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 500;
-    display: inline-flex;
-    align-items: center;
-}
-
-/* Monospace code spans (used for codes, keys, audit actions) */
-code, .mono {
-    font-family: 'Roboto Mono', 'Cascadia Code', 'Consolas', monospace;
-    font-size: 12px;
-    background-color: rgba(0, 0, 0, 0.04);
-    padding: 1px 5px;
-    border-radius: 3px;
-}
+/* Status pills used across all pages */
+.pill { display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:500; }
+.pill-success { background:rgba(99,153,34,0.12);color:#3B6D11; }
+.pill-warning { background:rgba(186,117,23,0.12);color:#633806; }
+.pill-error   { background:rgba(226,75,74,0.12);color:#791F1F; }
+.pill-info    { background:rgba(24,95,165,0.10);color:#0C447C; }
+.pill-neutral { background:rgba(136,135,128,0.12);color:#444441; }
 
 /* Blazor error UI */
 #blazor-error-ui {
-    background: #fcebeb;
-    border-top: 1px solid #f09595;
-    bottom: 0;
-    box-shadow: none;
-    display: none;
-    left: 0;
-    padding: 0.75rem 1rem;
-    position: fixed;
-    width: 100%;
-    z-index: 1000;
-    font-size: 13px;
-    color: #a32d2d;
+    background:#F7C1C1;border-top:1px solid #E24B4A;bottom:0;
+    display:none;left:0;padding:0.6rem 1.25rem;position:fixed;width:100%;z-index:1000;
+    font-size:13px;color:#791F1F;
 }
-
-#blazor-error-ui .dismiss {
-    cursor: pointer;
-    position: absolute;
-    right: 0.75rem;
-    top: 0.5rem;
-}
+#blazor-error-ui.blazor-error-boundary { display:block; }
+#blazor-error-ui .reload { color:#185FA5; }
