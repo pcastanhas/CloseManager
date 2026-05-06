@@ -16,9 +16,9 @@ Each `EntityType` has one or more `WorkflowTemplate` versions. A template define
 
 ## Templates are versioned
 
-A template has a `Version` and an `EffectiveFromPeriod` (yyyyMM). When a close period opens, the system resolves the latest version with `EffectiveFromPeriod <= period` and clones its definitions into live workstreams.
+Each `WorkflowTemplate` row has a `Version` (per-entity-type, monotonically incrementing) and an `IsCurrent` bit. Exactly one row per entity type is current at any time. When a close period opens, the system reads the current row for the entity's type and clones its definitions into live workstreams.
 
-In-flight workstreams pin to the version they started with. Future template edits don't retroactively change historical work.
+In-flight workstreams pin to the version they started with via FK to `WorkstreamDefId` and snapshot fields on `Workstream` and `WorkstreamStage`. Future template edits create new versions and flip the prior row to `IsCurrent = 0`, but in-flight workstreams continue to FK to the now-historical row, which stays in the database forever for lineage.
 
 ## Entity-level overrides
 
@@ -82,12 +82,13 @@ The (EntityId, RoleId, UserId) index on EntityRoleAssignment plus the (Workstrea
 When opening a period (e.g. October 2025):
 
 1. For each active entity, insert a `ClosePeriod` row.
-2. Resolve the workflow template version (latest `EffectiveFromPeriod <= '202510'` for the entity's type).
-3. For each `WorkstreamDef` in that template, insert a `Workstream` row, copying the snapshot fields (Code, Name, OrderIndex, role IDs).
-4. For each entity-specific override, insert an additional `Workstream` row.
-5. For each `WorkstreamDefChecklistItem`, insert corresponding `ChecklistItem` rows.
+2. Resolve the current workflow template (`WorkflowTemplate WHERE EntityTypeId = @t AND IsCurrent = 1`).
+3. For each `WorkstreamDef` in that template, insert a `Workstream` row, copying the snapshot fields (Code, Name, OrderIndex).
+4. For each `WorkstreamDefStage` of that def, insert a corresponding `WorkstreamStage` row, snapshotting RoleId, StageKind, IsFinalApproval, and StuckThresholdHours.
+5. For each entity-specific override, insert an additional `Workstream` row (with its own stages).
+6. For each `WorkstreamDefChecklistItem`, insert a corresponding `ChecklistItem` row scoped to its `WorkstreamStageId`.
 
-This is ~100 entities × 5-7 workstreams × 6-10 checklist items = ~3000-7000 rows in one transaction. Should complete in seconds. Run as a Hangfire job with a clear status indicator on the Period Management page.
+This is ~100 entities × 5-7 workstreams × ~3 stages × 6-10 checklist items per stage = on the order of ~10k-20k rows in one transaction. Should complete in seconds. Run as a Hangfire job with a clear status indicator on the Period Management page.
 
 ## Heterogeneous portfolio view
 

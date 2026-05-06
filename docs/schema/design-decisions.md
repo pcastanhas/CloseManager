@@ -62,15 +62,36 @@ The default target is N-1 (the immediately previous stage), but the reviewer can
 
 ## Why templates are versioned
 
-Workflow templates change over time. A new SOX control might add a checklist item; an org change might re-route a workstream from Treasury to Asset Manager. If templates were mutable, in-flight closes would silently change shape, and historical audit trails would mis-represent what was actually required at the time.
+Workflow templates change over time. A new SOX control might add a checklist item; an org change might re-route a workstream from Treasury to Asset Manager. The schema needs to handle template edits without breaking historical workstreams that point at the old structure.
 
-Templates are therefore versioned with an `EffectiveFromPeriod` (yyyyMM). When a period opens, the system resolves the latest version with `EffectiveFromPeriod <= period`. In-flight workstreams pin to that version forever.
+The model is deliberately minimal: each save in the templates editor creates a new immutable `WorkflowTemplate` row (with fresh child `WorkstreamDef`, `WorkstreamDefStage`, and `WorkstreamDefChecklistItem` rows) and flips the prior row's `IsCurrent` to 0. A filtered unique index enforces "exactly one current version per entity type." `Version` is a per-entity-type monotonically incrementing integer.
 
-The "Rebuild and restart workflow" admin action exists for the rare case where you genuinely want an in-flight close to pick up a newer template — it soft-deletes the old workstream, instantiates a fresh one from the current template, and links them via `RebuiltFromWorkstreamId`. Rare, audited, deliberate.
+What versioning gives us:
+
+- **FK lineage that doesn't dangle.** `Workstream.WorkstreamDefId` always resolves to a real row, even years after that template version was retired. An auditor in 2030 can walk from a 2025 workstream up to its template and see the structure that produced it.
+- **Snapshot stability for in-flight work.** When a period opens, workstreams instantiate from the *current* version and pin to it via FK. Subsequent template edits create new versions without touching prior ones, so in-flight workstreams are unaffected.
+- **Edit history via the audit log.** Each save writes an `AuditEvent` with `BeforeJson` (the prior version's full structure) and `AfterJson` (the new). "What did this template look like last month?" is answerable without a comparison UI.
+
+What versioning explicitly does *not* try to do:
+
+- **No prospective scheduling.** Edits take effect immediately on save. There is no `EffectiveFromPeriod` or "publish at month-end" mechanism. If you need a change to take effect later, save it later.
+- **No drafts.** The editor is all-or-nothing: open, edit, save (commits a new version) or cancel (discards). There is no Draft/Published/Superseded state machine — only `IsCurrent = 1` and `IsCurrent = 0`.
+- **No diff or compare-to-version-X UI.** The audit log carries change history; if visual comparison ever becomes valuable, it can be added later as a read-only feature against the existing version rows.
+
+In-flight workstreams pin to their original version forever and are unaffected by subsequent template edits. The "Rebuild and restart workflow" admin action exists for the rare case where you genuinely want an in-flight close to migrate to the current template — it marks the old workstream `Rebuilt`, instantiates a fresh one from the current version, and links them via `RebuiltFromWorkstreamId`. Rare, audited, deliberate.
+
+The simpler refresh-from-template action (additive only — adds new checklist items to in-flight workstreams without disrupting structure) reads the current version's checklist for the relevant `WorkstreamDef` and inserts any items that don't already exist. Stage role changes do not propagate; they require a full rebuild.
 
 ## Why snapshot fields on Workstream
 
-`Workstream` carries denormalized copies of `Code`, `Name`, and `OrderIndex` from `WorkstreamDef`. The role chain is snapshotted to the `WorkstreamStage` child table (one row per stage). Even though `WorkstreamDefId` and `SourceDefStageId` foreign keys are preserved for lineage, the snapshot freezes the definition at instantiation. Future template edits don't retroactively change historical workstreams.
+`Workstream` carries denormalized copies of `Code`, `Name`, and `OrderIndex` from `WorkstreamDef`. The role chain is snapshotted to the `WorkstreamStage` child table (one row per stage), with each stage carrying its own `RoleId`, `StageKind`, `IsFinalApproval`, and `StuckThresholdHours`. Checklist items are cloned into `ChecklistItem` rows scoped to the stage they apply to.
+
+Strictly speaking, this snapshot is redundant — `WorkstreamDefId` and `SourceDefStageId` foreign keys point at versioned (immutable) template rows, so the original definitions are reconstructable. The snapshot exists for two reasons:
+
+1. **Query performance.** The Dashboard, reviewer queue, and portfolio grid all read workstream display fields heavily. Reading them from `Workstream` directly avoids joins through `WorkstreamDef → WorkflowTemplate` on every query.
+2. **Resilience to schema evolution.** If the template structure changes shape in a future schema migration (new columns, renamed fields, restructured relationships), historical workstreams continue to render correctly from their snapshot rather than depending on a join that may need migration logic.
+
+The FK to the original definition is kept for lineage and audit; the snapshot is the operational read path.
 
 ## Why `Period` and `EntityId` are duplicated
 

@@ -6,9 +6,9 @@ This doc captures where the design session left off, what's decided, what's open
 
 Design phase. No code has been written. The repository contains:
 
-- A full schema (`docs/schema/schema.sql`) covering users, entities, workflow templates, multi-stage workstreams, files, checklists, comments, and audit events
-- Schema design decisions (`docs/schema/design-decisions.md`) — the why behind specific schema choices
-- Lifecycle walkthrough (`docs/schema/lifecycle-walkthrough.md`) — flagged as predating the multi-stage refactor; conceptual flow valid, SQL examples need re-derivation
+- A full schema (`docs/schema/schema.sql`) covering users, entities, workflow templates (versioned with IsCurrent bit), multi-stage workstreams, files, checklists, comments, and audit events
+- Schema design decisions (`docs/schema/design-decisions.md`) — the why behind specific schema choices, including the simplified template versioning model
+- Lifecycle walkthrough (`docs/schema/lifecycle-walkthrough.md`) — current; written against the post-refactor schema using a 3-stage example, with SQL framed as the bodies of the named stored procedures
 - Nine design docs in `docs/design/` covering portfolio view, reviewer queue, reviewer item page, preparer flow, app shell, tech stack, multi-entity considerations, active workflows, and workflow templates editor
 - Mockups README in `docs/mockups/` indexing the visual sketches produced in chat
 
@@ -16,10 +16,11 @@ Design phase. No code has been written. The repository contains:
 
 ### Schema and lifecycle
 
-- [ ] Rewrite `docs/schema/lifecycle-walkthrough.md` against the post-refactor schema. The current doc has a header note flagging it as stale. Cover the same beats (instantiate → prepare → review → approve, with rebuild and lock-expiry branches) but using `WorkstreamStage`, `CurrentStageIndex`, `IsFinalApproval`, and per-stage checklists. The conceptual structure is right; the SQL needs to be re-derived.
-- [ ] Add an integrity check job (Hangfire) that catches violations of "exactly one Final approver per workstream def." Document this alongside the publish stored procedure.
-- [ ] Document the period-open process in detail. Currently sketched in `07-multi-entity-considerations.md` but not pinned down at the SQL level.
-- [ ] Document the rebuild stored procedure (`sp_RebuildWorkstream`) and the refresh-from-template stored procedure (`sp_RefreshChecklistFromTemplate`) at SQL level. The Active Workflows doc references both but doesn't give the implementations.
+- [x] Rewrite `docs/schema/lifecycle-walkthrough.md` against the post-refactor schema. Done; the walkthrough now uses a 3-stage example (Preparer → Treasury-RE → Senior) and frames its SQL as the bodies of the named stored procedures (sp_AcquireLock, sp_SubmitWorkstream, sp_AdvanceStage, sp_SendBackToStage, sp_ApproveFinal, sp_RefreshChecklistFromTemplate, sp_RebuildWorkstream, plus the period-open instantiation pattern).
+- [x] ~~Document the publish stored procedure and integrity check for "exactly one Final approver per workstream def."~~ Publish procedure removed in template-versioning simplification (no Draft/Published/Superseded states, no publish ceremony). The "exactly one Final approver" rule is now enforced in the editor's validation step on save (see `09-workflow-templates-editor.md`); a periodic Hangfire integrity-check job is still worth adding in implementation as defense in depth, but it's no longer documented in a separate publish procedure.
+- [ ] **Add periodic integrity-check Hangfire job** that catches violations of "exactly one Review-kind stage per WorkstreamDef has IsFinalApproval = 1." Editor validation prevents this on save; the job catches drift from any other path (manual SQL, future bulk-import features, etc.). Document in tech stack / implementation kickoff.
+- [x] Document the period-open process at the SQL level. Done — covered in `lifecycle-walkthrough.md` Step 1 (instantiation), updated in `07-multi-entity-considerations.md`.
+- [x] Document the rebuild stored procedure (`sp_RebuildWorkstream`) and the refresh-from-template stored procedure (`sp_RefreshChecklistFromTemplate`) at SQL level. Done — both are in `lifecycle-walkthrough.md` as branch cases.
 
 ### UI screens still unsketched
 
@@ -33,13 +34,13 @@ Design phase. No code has been written. The repository contains:
 ### UI screens needing rework after multi-stage refactor
 
 - [ ] **Reviewer item page** (`docs/design/03-reviewer-item-page.md` + mockups) — was designed for two-stage flow. With multi-stage, the audit trail strip becomes longer (more stages = more events). Needs a more compact representation when chains are 3+ stages. Also the per-stage checklist needs to be clarified at runtime — reviewers see only their own stage's checklist, but should be able to see prior stages' completed checklists in a "history" tab or accordion.
-- [ ] **Publish dialog text** — should explicitly mention stage role changes as a thing that requires rebuild for in-flight workstreams (currently only mentions checklist additions/deletions). See note in `09-workflow-templates-editor.md` about role changes not propagating via refresh-from-template.
+- [x] ~~Publish dialog text — should explicitly mention stage role changes as a thing that requires rebuild for in-flight workstreams.~~ Publish dialog no longer exists; rolled into the Save dialog described in `09-workflow-templates-editor.md`, which already mentions stage role changes explicitly.
 
 ### Implementation kickoff
 
 - [ ] Set up the .NET solution. Recommended: ASP.NET Core 9 + Blazor Server, EF Core 9 + Dapper for hot paths, MudBlazor, Microsoft.Identity.Web, Hangfire, Serilog. Rationale in `docs/design/06-tech-stack.md`.
 - [ ] Implement the schema as EF Core migrations, applied via deployment pipeline.
-- [ ] Build stored procedures for state transitions (sp_SubmitWorkstream, sp_OpenForReview, sp_ApproveChecklistItem, sp_AdvanceStage, sp_SendBackToStage, sp_ApproveFinal, sp_PublishTemplate, sp_RefreshChecklistFromTemplate, sp_ClearLock, sp_RebuildWorkstream).
+- [ ] Build stored procedures for state transitions. The full list, with bodies sketched in `docs/schema/lifecycle-walkthrough.md`: `sp_OpenPeriod` (instantiation), `sp_AcquireLock` (lock + role check), `sp_SubmitWorkstream` (stage 0 → stage 1, also handles round increment on resubmit from NeedsRevision), `sp_AdvanceStage` (non-final stage advance), `sp_SendBackToStage` (rewind to a chosen earlier stage), `sp_ApproveFinal` (final stage → Approved), `sp_ApproveChecklistItem` (item Approved), `sp_FlagChecklistItemWithComment` (item NeedsRevision + Comment in one transaction), `sp_SaveTemplate` (template versioning save), `sp_RefreshChecklistFromTemplate` (additive in-flight refresh), `sp_RebuildWorkstream` (admin restart), `sp_ClearLock` (admin force-clear), `sp_ExpireLocks` (Hangfire auto-expiry).
 - [ ] Set up Entra SSO and confirm Microsoft Graph access to SharePoint (`Sites.Selected` permission on the specific site).
 - [ ] Build out the app shell first — sidebar, top bar, routing, role-based nav visibility.
 - [ ] Build the Dashboard (portfolio view) next — most users land here on first login.
@@ -48,16 +49,15 @@ Design phase. No code has been written. The repository contains:
 
 These are noted in various docs as "future":
 
-- True rename detection in template diff (currently treated as delete+add)
-- Edit-distance-based modification detection in template diff
-- Side-by-side or inline tree diff with line connectors (currently row-aligned, no connectors)
-- Template branching (multiple drafts from different parents)
+- Diff / compare-to-version-N UI for templates. The data is in the audit log's BeforeJson/AfterJson and in the historical version rows. Add if a real admin asks for it. Removed from v1 in the template-versioning simplification.
+- Template branching (multiple drafts from different parents). Removed entirely with the Draft state; would need re-introducing if branching ever became valuable.
+- Multi-session draft persistence in the templates editor. Deliberately dropped in favor of all-or-nothing save — large edits must finish in one session.
 - Cross-workstream dependencies (e.g., consolidation: a holdco's financials depending on subs' approved financials)
 - Standing notes / carryover items between periods
 - Variance/flux engine (auto-flux green hint shown in mockups, not implemented)
 - Direct accounting software integration (Yardi, NetSuite, Sage Intacct)
 - Calendar-aware deadlines for "never started" detection (currently calendar days from period open)
-- Multi-admin support (currently single-admin, no soft locks on drafts)
+- Multi-admin support (currently single-admin, no soft locks on drafts/working copies)
 - Daily digest emails, weekly retrospective metrics
 
 ## Read order to resume
@@ -71,9 +71,9 @@ If picking this up cold, read in this order:
 5. **`docs/design/01-portfolio-view.md`** + `02-reviewer-queue.md` + `03-reviewer-item-page.md` + `04-preparer-flow.md` — the four end-user screens, in order of how a user would encounter them.
 6. **`docs/design/07-multi-entity-considerations.md`** — the visibility model and what scale looks like.
 7. **`docs/design/06-tech-stack.md`** — what to build it in, and why.
-8. **`docs/design/08-active-workflows.md`** + **`09-workflow-templates-editor.md`** — the two consequential admin pages.
+8. **`docs/design/08-active-workflows.md`** + **`docs/design/09-workflow-templates-editor.md`** — the two consequential admin pages.
 
-The lifecycle walkthrough (`docs/schema/lifecycle-walkthrough.md`) is useful for understanding how state transitions work in SQL, but is flagged as predating the multi-stage refactor. Read for the conceptual flow; don't copy-paste the SQL.
+The lifecycle walkthrough (`docs/schema/lifecycle-walkthrough.md`) is the SQL skeleton for the stored procedures. Read it after the schema and design-decisions docs but before implementation kickoff — it's the doc most useful when actually building the procedures.
 
 ## Decisions log (chronological)
 
@@ -99,6 +99,7 @@ This is the running log of design decisions, captured to avoid re-litigating the
 18. **Templates editor uses workstream cards with indented approver cards.** Approver cards (teal-tinted, distinct from workstream cards) show role + summary + Edit button. Clicking Edit opens a modal with role, display name, stuck threshold, final flag, and checklist items. Stage 0 (Preparer) is implicit, not shown as a card.
 19. **Explicit IsFinalApproval flag rather than "highest OrderIndex wins."** Exactly one Review stage per workstream is final, enforced at application layer.
 20. **Per-stage stuck thresholds.** `WorkstreamDefStage.StuckThresholdHours` (NULL = system default). Treasury reviews are quick; Senior reviews take longer; one workstream-level threshold isn't right for both.
+21. **Template versioning simplified to IsCurrent bit + immutable history.** Dropped Draft/Published/Superseded states, the publish stored procedure, prospective `EffectiveFromPeriod`, and the entire diff/compare-to-version UI. Each save in the templates editor is all-or-nothing: it commits as a new `WorkflowTemplate` row with `IsCurrent = 1` and flips the prior current row to `IsCurrent = 0` (in `sp_SaveTemplate`). Filtered unique index `UX_WorkflowTemplate_Current` enforces "exactly one current per entity type" at the DB level. Versioning still exists — the version column and the immutable history of rows is necessary for FK lineage (`Workstream.WorkstreamDefId` always resolves) and for snapshot stability (in-flight workstreams pin to whatever version they were instantiated against). What's been dropped is the lifecycle/UI complexity, not the underlying immutability. Edit history that used to be displayed via a diff UI is now in the audit log's BeforeJson/AfterJson; visual comparison can be added later if anyone asks for it.
 
 ## Things to be wary of when implementing
 

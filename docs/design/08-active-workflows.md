@@ -7,7 +7,7 @@ The Active Workflows page is the admin operational surface for in-flight workstr
 Three categories of admin intervention:
 
 1. **Stuck or stale state.** Locks held by absent users, workstreams stuck across many rounds, items instantiated wrong that need to be torn down.
-2. **Template drift.** Pulling new template versions into in-flight workstreams (additive only — new checklist items appear, existing ones never disappear).
+2. **Template drift.** Pulling additions from the current template into in-flight workstreams that pinned to an older version (additive only — new checklist items appear, existing ones never disappear).
 3. **Forensic investigation.** Triage when someone reports "X is stuck" — find it, see who has the lock, see how many rounds, decide what to do.
 
 This page is **not** a generic "all workstreams" list. The Dashboard already shows status. Active Workflows surfaces only workstreams matching one of the explicit attention conditions.
@@ -19,7 +19,7 @@ Default filter chips at the top of the page:
 - **Stuck > 24h** — workstream sitting in same status > 24h (configurable)
 - **Lock held > 4h** — someone's lock has gone stale (auto-expiry runs every 15 min, but a 4h-old lock means no human activity in 4h on the same workstream)
 - **Round ≥ 4** — process problem; preparer/reviewer aren't converging
-- **Template behind** — workstream pinned to a template version that's no longer current
+- **Template behind** — workstream pinned to a `WorkflowTemplate` row that's no longer the current version (`IsCurrent = 0`)
 - **Never started** — workstream still in `NotStarted` past day 2 of close
 - **Blocked downstream** — workstream is blocking other workstreams' completion
 
@@ -33,7 +33,7 @@ Three primary admin actions, listed in increasing destructiveness:
 
 ### Refresh from template (additive)
 
-Pulls newer-version checklist items into existing in-flight workstreams. Never removes existing items. Used when a SOX control is added mid-period and admins want existing workstreams to pick it up without restarting them.
+Pulls additions from the current template into existing in-flight workstreams that pinned to an older version. Never removes existing items. Used when a SOX control is added mid-period (template was edited and saved as a new version) and admins want existing workstreams to pick it up without restarting them.
 
 The confirmation dialog previews additions only:
 - "3 new check items will be added to each of 5 selected workstreams"
@@ -108,7 +108,7 @@ The page should feel slightly more "serious" than the rest of the admin UI:
 
 Each action is a stored procedure that does the state change(s) and the audit insert(s) in one transaction:
 
-- `sp_RefreshChecklistFromTemplate` — takes a workstream ID and a template version, inserts missing checklist items, writes audit
+- `sp_RefreshChecklistFromTemplate` — takes a workstream ID; resolves the current template for that workstream's entity type, computes missing checklist items per stage by comparing the workstream's existing items to the current template's defaults, inserts the missing ones, writes audit
 - `sp_ClearLock` — takes a workstream ID, nulls lock fields, writes audit
 - `sp_RebuildWorkstream` — takes a workstream ID, marks old as Rebuilt, instantiates new from current template, writes audit on both
 
@@ -132,4 +132,4 @@ The pattern used here should apply to all destructive admin actions across the s
 5. **Typed confirmation phrase** — only for irreversible actions; matches the count or names the action explicitly
 6. **Submit button** — disabled until reason and confirmation are valid
 
-This pattern shows up again on Period Management (closing a period) and on Workflow Templates (deprecating a template version). Worth implementing as a shared Blazor component (`<DangerousActionDialog />` or similar).
+This pattern shows up again on Period Management (closing a period). Worth implementing as a shared Blazor component (`<DangerousActionDialog />` or similar).

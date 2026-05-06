@@ -98,14 +98,26 @@ CREATE INDEX IX_EntityRoleAssignment_Lookup
 -- Workflow templates (versioned)
 -- =============================================================================
 -- A template is an ordered list of workstream definitions for a given
--- entity type. Templates are versioned with effective-from periods. In-flight
--- workstreams pin to the version active at instantiation.
+-- entity type. Each save in the template editor creates a new immutable
+-- WorkflowTemplate row (with fresh child rows) and marks the prior current
+-- row IsCurrent = 0. Exactly one row per EntityTypeId has IsCurrent = 1
+-- at any time, enforced by the filtered unique index below.
+--
+-- New closes always instantiate from the current row. In-flight workstreams
+-- retain a FK to whatever version they were instantiated against; they are
+-- not affected by subsequent template edits unless explicitly rebuilt
+-- (Active Workflows → Rebuild).
+--
+-- Version numbers are per-entity-type, monotonically increasing. They serve
+-- lineage (so Workstream.WorkstreamDefId always resolves to a real row) and
+-- audit (so an admin can see "this workstream came from v7"). They are not
+-- used for prospective scheduling or comparison features.
 
 CREATE TABLE WorkflowTemplate (
     WorkflowTemplateId  bigint IDENTITY PRIMARY KEY,
     EntityTypeId        int NOT NULL REFERENCES EntityType(EntityTypeId),
-    Version             int NOT NULL,
-    EffectiveFromPeriod char(6) NOT NULL,               -- yyyyMM, prospective
+    Version             int NOT NULL,                   -- per-entity-type, monotonically increasing
+    IsCurrent           bit NOT NULL DEFAULT 1,         -- exactly one current row per EntityTypeId
     Notes               nvarchar(1000) NULL,
     CreatedAtUtc        datetime2(3) NOT NULL DEFAULT SYSUTCDATETIME(),
     CreatedByUserId     bigint NOT NULL REFERENCES [User](UserId),
@@ -115,6 +127,10 @@ CREATE TABLE WorkflowTemplate (
     RowVersion          rowversion NOT NULL,
     CONSTRAINT UQ_WorkflowTemplate UNIQUE (EntityTypeId, Version)
 );
+-- Enforces "exactly one current row per entity type" at the DB level.
+CREATE UNIQUE INDEX UX_WorkflowTemplate_Current
+    ON WorkflowTemplate(EntityTypeId)
+    WHERE IsCurrent = 1 AND IsDeleted = 0;
 
 -- Workstream definitions within a template version.
 CREATE TABLE WorkstreamDef (
