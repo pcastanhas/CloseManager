@@ -108,6 +108,8 @@ A two-stage workstream's happy path is six events: Instantiated, Started, Submit
 
 A three-stage workstream's happy path is eight events. Add one round of revision and it's twelve. Add a stage-2-back-to-stage-1 send-back and it's sixteen. The strip can't show all of these inline without becoming illegible.
 
+The strip uses a single display mode — chronological, compact event tiles. An earlier design had two modes (full for short chains, compact for long ones) that switched automatically based on stage count and round count. That was cut in the v1 simplification: one consistent mode is easier to build, easier to test, and easier for users to learn.
+
 ### Two display modes
 
 **Full mode** (default for chains ≤ 2 stages and round ≤ 2):

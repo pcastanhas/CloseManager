@@ -45,15 +45,21 @@ This is much more flexible:
 - **Tiles flex with row width.** With `flex: 1` and a `min-width`, rows with fewer workstreams have wider tiles; rows with more workstreams compress before scrolling. Variability handled gracefully.
 - **Dependency state is visible.** A tile that's blocked by an upstream workstream renders muted with "blocked by val." A reviewer sees green→red→green→blocked across a row and immediately understands the bottleneck.
 
+## Period-not-opened banner
+
+When the current month has no open period yet, a banner renders at the top of the Dashboard above the entity grid:
+
+> **The {month} close hasn't been opened yet.** Contact your admin to open it — your workstreams will appear here once it's open.
+
+This replaces the confusing empty-grid state with a clear explanation. One conditional render; saves a lot of "why is my queue empty?" questions at the start of each month.
+
+The banner appears when: the current calendar month has no `ClosePeriod` rows for any entity the user is assigned to. It disappears once the period is opened.
+
 ## Grouping
 
-Entities are grouped by entity type, with each section having its own header and aggregate badge ("3 stuck", "healthy", "2 at risk"). Healthy sections collapse to a single row. With 100+ entities, this grouping is essential — a flat list of 100 rows is unscannable; 4 sections of 20-40 entities each, with healthy ones collapsed, lets a manager scan the whole portfolio in 5 seconds and drill into the problem area.
+Entities are grouped by entity type — Real Estate Assets, Investment Funds, Operating Cos, Holding Cos — with each section having its own header and aggregate badge ("3 stuck", "healthy", "2 at risk"). Healthy sections collapse to a single row. With 100+ entities this grouping is essential; a flat list of 100 rows is unscannable.
 
-Three view toggles in the header:
-
-- **By type** (default): Real Estate Assets, Investment Funds, Operating Cos, Holding Cos
-- **By accountant**: rows grouped by who's preparing them, useful for capacity questions ("Maya is overloaded")
-- **By reviewer**: useful for senior reviewers asking "what's pending in my queue across entities?"
+No grouping toggles ("by accountant", "by reviewer"). They add UI complexity that a small co-located team handles conversationally. Add them if the team grows or goes remote.
 
 ## Entity-level overrides
 
@@ -63,6 +69,4 @@ The override mechanism is captured in the schema as additional rows in the entit
 
 ## Reviewer load panel
 
-The portfolio view includes a "Reviewer load right now" panel at the bottom showing per-role queue depth and average aging. This makes the implicit signal in the grid (lots of amber Cash cells = Treasury bottleneck) into an explicit one. Critical when a single reviewer covers many entities.
-
-For an org where Treasury-RE is one person and they're reviewing bank recs for 40+ entities, that's the single biggest failure point in the close, and it deserves permanent surface real estate.
+~~Removed in v1 simplification.~~ For a 12-person team in the same office, queue depth is a conversation, not a dashboard panel. The Work Items page already shows each person their own load. If the team grows or remote work becomes the norm, add it then.

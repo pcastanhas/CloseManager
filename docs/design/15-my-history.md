@@ -72,9 +72,9 @@ Each row shows:
 - **Timestamp** — Time only within each date group (the date is in the section header). Full timestamp tooltip on hover.
 - **Expand** — a small ▶ icon that expands the row to show `BeforeJson` / `AfterJson` in the same format as Audit Search's expanded rows. Most users will never need this; auditors will.
 
-### Grouping by period
+### Grouping
 
-An alternate grouping toggle: "Group by date" (default) vs. "Group by period." When grouped by period, each section header is the period name ("May 2025 · 47 actions") rather than a calendar date. This view is better for an auditor asking "show me everything you did in April's close."
+The view is grouped by calendar date only. A "Group by period" toggle was considered and cut — the period dropdown filter at the top already scopes the view to a single period, which covers the auditor use case. Two ways to do the same thing adds confusion without adding capability. This view is better for an auditor asking "show me everything you did in April's close."
 
 ### Workstream deep-links
 
@@ -108,5 +108,5 @@ No audit events written by this page. Read-only.
 - Action labels are styled at font-weight 500 (medium), context text at 400 (regular) in a slightly smaller size — the action should catch the eye first, context identifies what it's about
 - Notes text is in a distinct muted color block below the action, italicized — visually separate from the label so it doesn't read as part of the action name
 - Date group headers are a thin `<hr>` equivalent with the date text inline — not a heavy section header, just enough separation to chunk the timeline visually
-- The "Group by period" toggle is a secondary button (no primary color) in the filter row — it's a view preference, not a filter
+- No grouping toggle — date grouping is the only view
 - Expand behavior on each row uses a smooth height animation (`max-height` transition), not an abrupt content pop — the page is a personal log and should feel a little more lightweight than the formal admin surfaces

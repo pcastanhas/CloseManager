@@ -24,7 +24,7 @@ Index of entity types and their current template. Each entity type shows:
 - Scale context: "5 workstreams · 30 checklist items · used by 42 entities · 487 instantiated workstreams"
 - An "Edit" button that opens the editor seeded with the current version's structure
 
-A "History" link per entity type opens a read-only list of historical (`IsCurrent = 0`) versions. Each historical row shows version number, when it was created, who created it, and how many in-flight workstreams still reference it. Clicking opens the same editor in read-only mode (no save affordance, no edit controls). Historical versions cannot be edited or deleted — they are forever, by design, for FK lineage.
+Historical versions (`IsCurrent = 0`) are retained in the database permanently for FK lineage — in-flight workstreams always resolve their `WorkstreamDefId`. There is no UI for browsing historical versions in v1. The audit log's `BeforeJson`/`AfterJson` on each `TemplateCreated` event captures the full before/after structure for anyone who genuinely needs to see what changed. Add a history UI if admins ask for it after go-live.
 
 ## Template editor
 
@@ -132,6 +132,10 @@ Two buttons in the editor header:
 
 - **Cancel** — discards the working copy without confirmation if no changes have been made; with a confirmation dialog ("Discard your changes?") if changes exist. No reason field; cancel is cheap.
 - **Save** — opens the Save dialog (below).
+
+### Browser navigate-away protection
+
+When the working copy has unsaved changes, a standard `beforeunload` browser warning fires if the user tries to close the tab, navigate away, or refresh: "You have unsaved template changes. Leave anyway?" This is a single event listener on the editor component; it prevents the obvious accidental loss of a large restructure. The warning is suppressed if no changes have been made (clean working copy = no warning).
 
 ## Save dialog
 

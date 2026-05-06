@@ -172,9 +172,9 @@ CloseManager.sln
 - [ ] `sp_SubmitWorkstream(@WorkstreamId, @UserId)` — validates primary file exists; advances `CurrentStageIndex`; stamps stage 0 `Outcome = 'Advanced'`; releases lock; audit event
 - [ ] `sp_ApproveChecklistItem(@ChecklistItemId, @UserId)` — sets `PreparerStatus = 'Ready'` (stage-0 callers) or `ReviewerStatus = 'Approved'` (stage N callers) based on caller's current stage
 - [ ] `sp_FlagChecklistItemWithComment(@ChecklistItemId, @UserId, @CommentBody)` — sets `ReviewerStatus = 'NeedsRevision'`; inserts `Comment` in same transaction
-- [ ] **Preparer item page** (`/work/{workstreamId}`) — file upload zone (primary + supporting), prep checklist (stage 1 items shown as guide with PreparerStatus), submit button locked until primary file exists, submit confirmation modal
-- [ ] **Work Items page** (`/work`) — three sections (Needs Attention / Up Next / In Progress); preparer tiles with pencil icon; locked tile treatment; sidebar badge count
-- [ ] **Dashboard** (`/`) — portfolio view; entity rows grouped by type; workstream tiles with status color, name, current stage; entity-type section headers with aggregate badges; reviewer load panel
+- [ ] **Preparer item page** (`/work/{workstreamId}`) — file upload zone (primary + supporting), file version pill row (v1→v2→v3 derived from ReplacesFileId), locked-by-you session banner, prep checklist (stage 1 items as guide with PreparerStatus), submit button locked until primary file exists, submit confirmation modal
+- [ ] **Work Items page** (`/work`) — two sections (Needs Attention / Up Next+In Progress); preparer tiles with pencil icon; locked tile with expiry tooltip; locked-by-you session warning; sidebar badge count
+- [ ] **Dashboard** (`/`) — portfolio view; entity rows grouped by type (no grouping toggles); workstream tiles with status color, name, current stage; entity-type section headers with aggregate badges; period-not-opened banner
 - [ ] Lock contention handling: `sp_AcquireLock` returns 0 rows → UI queries current lock holder and shows "Locked by {name}, expires in N min"
 
 **Tests:**
@@ -193,7 +193,7 @@ CloseManager.sln
 - [ ] `sp_AdvanceStage(@WorkstreamId, @UserId)` — all current-stage items must be `ReviewerStatus = 'Approved'`; `CurrentStageIndex++`; stamps stage `Outcome = 'Advanced'`; releases lock; throws if called on final stage
 - [ ] `sp_SendBackToStage(@WorkstreamId, @UserId, @Reason)` — `CurrentStageIndex--`; `Round++`; `Status = 'NeedsRevision'`; stamps current stage `Outcome = 'SentBack'`; clears prior stage's `Outcome`/`CompletedAt`; releases lock; throws if `CurrentStageIndex = 0`
 - [ ] `sp_ApproveFinal(@WorkstreamId, @UserId)` — same item check as `sp_AdvanceStage`; `Status = 'Approved'`; stamps `ApprovedAtUtc`, `ApprovedByUserId`; releases lock; throws if current stage is not `IsFinalApproval = 1`
-- [ ] **Reviewer item page** (`/work/{workstreamId}`) — stage indicator header ("Stage 2 of 3 · Senior review (final)"), audit trail strip (full mode ≤2 stages, compact mode ≥3), prior stages accordion (read-only), checklist scoped to current stage, advance/"Finalize" button locked until all items approved, "Needs revision" button opens reason-only dialog
+- [ ] **Reviewer item page** (`/work/{workstreamId}`) — stage indicator header ("Stage 2 of 3 · Senior review (final)"), audit trail strip (single compact chronological mode), prior stages accordion (read-only), file version pill row, locked-by-you session banner, checklist scoped to current stage, advance/"Finalize" button locked until all items approved, "Needs revision" button opens reason-only dialog
 - [ ] Work Items page — reviewer tiles added (checkmark icon); tile shows stage chain with current stage bolded, checklist progress bar
 - [ ] **My History page** (`/history`) — timeline grouped by date, action chips filter, expand row for BeforeJson/AfterJson, "group by period" toggle, CSV export
 
@@ -218,7 +218,7 @@ CloseManager.sln
 - [ ] `sp_RebuildWorkstream(@WorkstreamId, @UserId, @Reason)` — marks old `Status = 'Rebuilt'`; instantiates fresh workstream from current template; links via `RebuiltFromWorkstreamId`; audit events on both old and new
 - [ ] **Active Workflows page** (`/admin/active-workflows`) — attention condition filter chips (Stuck >24h, Lock held >4h, Round ≥4, Template behind, Never started) with counts; search; bulk select; bulk action buttons (Refresh, Clear locks, Restart); confirmation dialogs per action pattern; typed confirm phrase for Restart
 - [ ] Periodic Hangfire integrity-check job — scans `WorkstreamDef` rows in current templates for any with no `IsFinalApproval = 1` stage; logs warning via Serilog; does not auto-fix
-- [ ] Dashboard reviewer load panel wired to real data
+- [ ] Full Audit Search wired to real data (was built in Phase 3 but only had reference-data events; now has workstream events to query)
 
 **Tests:**
 - [ ] `sp_RefreshChecklistFromTemplate`: add item to template (save v2); call refresh on v1-instantiated workstream; assert new item added, existing items unchanged
@@ -237,7 +237,11 @@ CloseManager.sln
   - Work Items tile renders correct section for each status
   - Send-back dialog blocks submit until reason field filled
   - Advance button disabled with correct tooltip when checklist items remain
-  - Locked tile shows lock holder name and expiry
+  - Locked tile shows lock holder name and expiry tooltip ("expires in N min")
+  - Locked-by-you banner appears when `LockedByUserId = currentUser`
+  - File version pill row renders correct count and highlights current version
+  - Period-not-opened banner renders when no ClosePeriod rows exist for current month
+  - Template editor fires `beforeunload` warning when working copy has changes
   - Settings secret field masks value; shows on toggle
 - [ ] Testcontainers stress tests:
   - `sp_AssertPeriodOpen` called from every state-transition SP on a closed period — assert all throw 50050

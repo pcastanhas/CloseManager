@@ -115,6 +115,19 @@ This is the running log of design decisions, captured to avoid re-litigating the
 33. **System settings live in an `AppSetting` key/value table.** Only the DB connection string lives in `appsettings.json`. All other configuration (stuck thresholds, lock duration, period close confirm phrase, SharePoint/Graph credentials) is in `AppSetting`. Keys are fixed at deployment via seed data; values are admin-editable via the Settings page. Secret values (`IsSecret = 1`) are masked in the UI and in audit log JSON.
 34. **Settings page designed (`docs/design/16-settings.md`).** Two sections: personal preferences (all users — theme, sidebar, density) and system settings (admin only — grouped key/value editor with SharePoint connection test button).
 
+35. **Reviewer load panel cut from Dashboard.** For a 12-person co-located team, queue depth is a conversation. The Work Items page already shows each person their own load. Add if team grows or goes remote.
+36. **Dashboard grouping toggles cut.** "By accountant" and "by reviewer" groupings removed. Entity-type grouping only. Small team handles this conversationally.
+37. **"Expected later today" Work Items section cut.** Inference logic will be wrong often enough to erode trust. Two sections only: Needs Attention and Up Next / In Progress.
+38. **Dual audit trail strip modes simplified to one.** A single compact chronological mode replaces the full/compact switching logic. Easier to build, easier to test, consistent for users.
+39. **Template history UI cut from v1.** Historical versions stay in the DB for FK lineage. Audit log BeforeJson/AfterJson covers "what changed." Add UI if admins ask post-go-live.
+40. **"Group by period" toggle cut from My History.** The period dropdown filter already scopes the view. Two ways to do the same thing adds confusion without adding capability.
+41. **Keyboard navigation (J/K) on reviewer queue deferred.** For a team reviewing 5-7 items at a time, mouse navigation is fine. Add if reviewers request it.
+42. **"Locked by you in another session" warning added.** When a user opens a workstream they already have locked elsewhere, a banner offers to transfer the lock to the current window. Applies to both preparers and reviewers. Prevents "why can't I edit my own workstream?" confusion.
+43. **Period-not-opened Dashboard banner added.** When no period exists for the current month, the Dashboard shows a clear explanation rather than an empty grid: "The {month} close hasn't been opened yet." One conditional render.
+44. **File version history added to preparer (and reviewer) item page.** A version pill row (v1 → v2 → v3 current) sits above the document viewer at all times. Each pill is clickable. Derived from `WorkstreamFile.ReplacesFileId`; no schema change.
+45. **Lock expiry tooltip added to Work Items locked tiles.** "Locked 43 minutes ago · expires in 2 minutes" appears on hover, giving the waiting person context on whether to wait or come back. Low effort, high clarity.
+46. **Unsaved-changes browser warning added to template editor.** A `beforeunload` event fires when the working copy has changes and the user tries to navigate away. Prevents accidental loss of large restructures.
+
 ## Things to be wary of when implementing
 
 - **The audit trail must be non-bypassable.** Implement state transitions as stored procedures that do the state change and the audit insert in one transaction. Application code calls the procedures rather than issuing UPDATEs directly.

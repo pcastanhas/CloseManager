@@ -12,11 +12,10 @@ A reviewer like Treasury-RE is fielding work across 40+ entities. They need:
 
 The queue has three sections, in priority order:
 
-1. **Stuck and blocking** — items past the aging threshold, especially ones whose stuck-ness is blocking downstream work. Red tile with left-border accent. The most urgent class of work.
-2. **Today** — recently submitted items still within normal SLA. Amber if blocking, neutral otherwise.
-3. **Expected later today** — workstreams the system expects to land in the queue based on preparer activity (not yet submitted, but in late-stage prep). Helps reviewers plan whether to batch.
+1. **Needs attention** — items past the aging threshold or sent back. Red tile with left-border accent. The most urgent class of work.
+2. **Up next / In progress** — recently submitted items still within normal SLA, plus items the reviewer has already started. Amber if past threshold, neutral otherwise.
 
-A flat list sorted by urgency loses the mental model. Reviewers want to see "what's on fire," "what's normal," and "what's coming," not just "everything sorted by aging."
+A flat list sorted by urgency loses the mental model. Reviewers want to see "what's on fire" and "what's normal," not everything sorted by aging. A predicted "expected later today" third section was considered and cut — inference logic will be wrong often enough to erode trust, and a small team can see what's coming by looking at the Dashboard.
 
 ## Action focus banner
 
@@ -49,14 +48,8 @@ These warrant different priorities even at the same age.
 
 ## Keyboard navigation
 
-Reviewers blast through queues. J/K to move between items, Enter to open, is the difference between 3 minutes per item and 30 seconds. Worth implementing in v1, even if just for the queue.
+J/K navigation was considered for v1 and deferred. For a team reviewing 5-7 items at a time, mouse navigation is fine. Add if reviewers ask for it.
 
-## Sorting and filtering toggles
+## Sorting and filtering
 
-Three view toggles:
-
-- **By urgency** (default): the three-section layout above
-- **By accountant**: groups items by preparer, useful when reviewers want to give targeted feedback to one person ("Maya, here's what I'm seeing across your entities this round")
-- **By workstream**: rare, but useful for monthly retrospective ("show me all the debt service reviews I did this month")
-
-Filter persistence: the toggle state should survive across sessions per user. Treasury-RE folks who think entity-first vs workstream-first have different mental models.
+No view toggles. The two-section urgency layout is the only view. "By accountant" and "by workstream" groupings were considered and cut — the My History page covers the retrospective use case, and targeted feedback to a preparer is a conversation, not a filtered queue view.

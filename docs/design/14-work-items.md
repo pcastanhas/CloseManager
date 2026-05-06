@@ -53,21 +53,17 @@ Conditions for appearing here:
 - Reviewer items where the workstream's `CurrentStageIndex` entry time exceeds the stage's `StuckThresholdHours`
 - Any item where `Round >= 4` (process is not converging — escalation is probably warranted)
 
-**Up next (amber)**
+**Up next / In progress (amber → neutral)**
 
-Items that are fresh arrivals — just landed on the user. These are the expected day-to-day items.
-
-Conditions:
-- Preparer items `Status = 'NotStarted'` (period just opened; first touch needed)
-- Reviewer items where the workstream entered the current stage within the last 24h
-
-**In progress (neutral)**
-
-Items the user has already started working on (lock held or released recently, some activity recorded) but has not yet submitted or approved.
+Everything else that is waiting on the user. Fresh arrivals show amber; items already started show neutral.
 
 Conditions:
-- Preparer items `Status = 'InProgress'` with at least one file uploaded
-- Reviewer items where the current stage has a `StartedAtUtc` for this user (they've opened the item) but no `CompletedAtUtc`
+- Preparer items `Status = 'NotStarted'` (period just opened; amber)
+- Preparer items `Status = 'InProgress'` with at least one file uploaded (neutral)
+- Reviewer items where the workstream entered the current stage within the last 24h (amber)
+- Reviewer items where the current stage has a `StartedAtUtc` but no `CompletedAtUtc` (neutral)
+
+A "Expected later today" third section (predicting items about to arrive based on preparer activity) was considered and cut. Inference logic will be wrong often enough to erode trust. A small team can see what's coming by glancing at the Dashboard.
 
 ### Empty state
 
@@ -108,11 +104,12 @@ If a workstream the user could otherwise act on is locked by someone else:
 - Item appears in the list (the user may need to be aware of it)
 - Tile has slightly reduced opacity and a grey left border overriding the section color
 - A lock icon and "Locked by {name}" string appear in place of the normal waiting-since timestamp
+- A tooltip on the lock label shows the expiry detail: "Locked 43 minutes ago · expires in 2 minutes" — gives the person waiting context on whether to grab a coffee or hit refresh
 - Clicking the tile still navigates to the item page, but the lock acquisition controls are disabled there with an explanation
 
 If the lock is held by the current user in another tab or browser session:
-- Tile shows "Locked by you" with an amber warning
-- Navigating to the item page will allow the user to re-acquire or continue their session
+- Tile shows "Locked by you (another session)" with an amber warning
+- Clicking navigates to the item page where a banner offers to transfer the lock to this session: "You have this open elsewhere — click to take over the lock in this window"
 
 ## Notification badge
 

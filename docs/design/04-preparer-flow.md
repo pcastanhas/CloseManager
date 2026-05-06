@@ -80,7 +80,15 @@ No separate "open thread" UI, no global comment composer. Maya reads top-to-bott
 
 The dashed-border "Drop a new version to replace v3 · creates v4" is Maya's primary affordance for actual document changes. Replies in comments are for explanation; new document versions are for actual fixes.
 
-A "v1, v2" history button shows what she submitted previously, useful when iterating across rounds.
+### File version history
+
+A version pill row sits above the document viewer at all times — not buried in a button:
+
+> **v1** · Jan 15 · Maya  →  **v2** · Jan 17 · Maya  →  **v3 (current)** · Jan 19 · Maya
+
+Each pill is clickable and opens that version in the viewer (read-only for older versions). The current version pill is bolded. This is visible to both the preparer and the reviewer — when a reviewer says "the v2 file had this right, what happened in v3?" both parties can click v2 and compare without leaving the page.
+
+The version chain is derived from `WorkstreamFile.ReplacesFileId`. No new schema needed.
 
 ### "Add" tab on supporting docs
 
@@ -93,6 +101,16 @@ When Maya uploads v4 while a "needs revision" item is open, the system should as
 > Does this version address the Mezz interest issue?
 
 And offer to flip the item from "needs revision" to a state like "addressed, awaiting re-verification." This keeps the checklist honest about what work has been done. Erin's view of that item then says "Maya marked addressed in v4" so she knows what to look for.
+
+## "Locked by you in another session" warning
+
+When Maya opens a workstream she already has locked in another tab or browser session, a banner appears at the top of the page:
+
+> **You have this workstream open in another session.** Click here to take over the lock in this window.
+
+Clicking transfers the lock to the current session (refreshes `LockedAtUtc` and `LockExpiresAtUtc`). Without this, Maya would see "locked by Maya Rodriguez, expires in 8 minutes" and be confused why she can't edit her own workstream. One conditional render based on `LockedByUserId = currentUser AND sessionId ≠ currentSession`.
+
+The same banner applies to reviewers.
 
 ## Resubmit confirmation
 
