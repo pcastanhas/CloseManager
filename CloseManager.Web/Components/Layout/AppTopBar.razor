@@ -1,0 +1,47 @@
+@using Microsoft.AspNetCore.Components.Authorization
+
+<MudAppBar Elevation="0" Dense="true"
+           Style="border-bottom: 0.5px solid var(--mud-palette-divider); background: white;">
+    <MudIconButton Icon="@Icons.Material.Outlined.Menu"
+                   Color="MudBlazor.Color.Default"
+                   Edge="MudBlazor.Edge.Start"
+                   OnClick="@OnMenuToggle"
+                   aria-label="Toggle sidebar" />
+
+    <MudSpacer />
+
+    <MudIconButton Icon="@Icons.Material.Outlined.Search"
+                   Color="MudBlazor.Color.Default"
+                   aria-label="Search" />
+
+    <AuthorizeView>
+        <Authorized>
+            <MudMenu AnchorOrigin="MudBlazor.Origin.BottomRight"
+                     TransformOrigin="MudBlazor.Origin.TopRight"
+                     Dense="true">
+                <ActivatorContent>
+                    <MudChip T="string"
+                             Icon="@Icons.Material.Outlined.AccountCircle"
+                             Color="MudBlazor.Color.Default"
+                             Variant="MudBlazor.Variant.Text"
+                             Class="ml-1">
+                        @(context.User.FindFirst("name")?.Value
+                          ?? context.User.Identity?.Name
+                          ?? "Account")
+                    </MudChip>
+                </ActivatorContent>
+                <ChildContent>
+                    <MudMenuItem Icon="@Icons.Material.Outlined.Logout"
+                                 Href="MicrosoftIdentity/Account/SignOut"
+                                 ForceLoad="true">
+                        Sign out
+                    </MudMenuItem>
+                </ChildContent>
+            </MudMenu>
+        </Authorized>
+    </AuthorizeView>
+</MudAppBar>
+
+@code {
+    [Parameter] public EventCallback OnMenuToggle { get; set; }
+}

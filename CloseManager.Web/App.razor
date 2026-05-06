@@ -1,0 +1,31 @@
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Routing
+
+<CascadingAuthenticationState>
+    <Router AppAssembly="@typeof(App).Assembly">
+        <Found Context="routeData">
+            <AuthorizeRouteView RouteData="@routeData" DefaultLayout="@typeof(Components.Layout.MainLayout)">
+                <NotAuthorized>
+                    @if (!context.User.Identity?.IsAuthenticated ?? true)
+                    {
+                        <RedirectToLogin />
+                    }
+                    else
+                    {
+                        <MudText Typo="MudBlazor.Typo.h6">You are not authorized to view this page.</MudText>
+                    }
+                </NotAuthorized>
+                <Authorizing>
+                    <MudProgressCircular Indeterminate="true" />
+                </Authorizing>
+            </AuthorizeRouteView>
+            <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+        </Found>
+        <NotFound>
+            <PageTitle>Not found — CloseManager</PageTitle>
+            <LayoutView Layout="@typeof(Components.Layout.MainLayout)">
+                <MudText Typo="MudBlazor.Typo.h5">Page not found.</MudText>
+            </LayoutView>
+        </NotFound>
+    </Router>
+</CascadingAuthenticationState>

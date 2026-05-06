@@ -1,0 +1,21 @@
+<MudContainer MaxWidth="MudBlazor.MaxWidth.Small"
+              Class="d-flex align-center justify-center"
+              Style="min-height: 100vh;">
+    <MudPaper Elevation="0" Class="pa-8 text-center"
+              Style="border: 0.5px solid var(--mud-palette-divider);">
+        <MudIcon Icon="@Icons.Material.Outlined.PersonOff"
+                 Style="font-size: 48px; color: var(--mud-palette-text-secondary);"
+                 Class="mb-4" />
+        <MudText Typo="MudBlazor.Typo.h6" Class="mb-2">Account deactivated</MudText>
+        <MudText Typo="MudBlazor.Typo.body2"
+                 Style="color: var(--mud-palette-text-secondary);"
+                 Class="mb-6">
+            Your account has been deactivated. Contact your administrator to regain access.
+        </MudText>
+        <MudButton Href="MicrosoftIdentity/Account/SignOut"
+                   ForceLoad="true"
+                   Variant="MudBlazor.Variant.Outlined">
+            Sign out
+        </MudButton>
+    </MudPaper>
+</MudContainer>

@@ -1,0 +1,91 @@
+@inherits LayoutComponentBase
+@using CloseManager.Web.Auth
+@using Microsoft.AspNetCore.Components.Authorization
+@inject AuthenticationStateProvider AuthStateProvider
+@inject UserSyncService UserSync
+@inject ILogger<MainLayout> Logger
+
+<MudThemeProvider Theme="_theme" />
+<MudDialogProvider FullWidth="true" MaxWidth="MudBlazor.MaxWidth.Small" />
+<MudSnackbarProvider />
+
+@if (_deactivated)
+{
+    <DeactivatedScreen />
+}
+else
+{
+    <MudLayout>
+        <AppTopBar OnMenuToggle="ToggleSidebar" />
+        <MudDrawer @bind-Open="_sidebarOpen"
+                   Elevation="0"
+                   Variant="MudBlazor.DrawerVariant.Responsive"
+                   ClipMode="MudBlazor.DrawerClipMode.Always">
+            <AppSidebar IsAdmin="@_isAdmin" />
+        </MudDrawer>
+        <MudMainContent>
+            <MudContainer MaxWidth="MudBlazor.MaxWidth.False" Class="pa-6">
+                @Body
+            </MudContainer>
+        </MudMainContent>
+    </MudLayout>
+}
+
+@code {
+    private bool _sidebarOpen = true;
+    private bool _isAdmin = false;
+    private bool _deactivated = false;
+    private bool _synced = false;
+
+    private readonly MudTheme _theme = new()
+    {
+        PaletteLight = new MudBlazor.PaletteLight
+        {
+            AppbarBackground = "#ffffff",
+            AppbarText = "#1a1a1a",
+            DrawerBackground = "#fafafa",
+            DrawerText = "#1a1a1a",
+            Primary = "#1a1a1a",
+            Secondary = "#6b6b6b",
+            Background = "#f5f5f3",
+            Surface = "#ffffff",
+        }
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _synced) return;
+        _synced = true;
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var principal = authState.User;
+
+            if (principal.Identity?.IsAuthenticated == true)
+            {
+                await UserSync.SyncAsync(principal);
+
+                var oidString = principal.FindFirst("oid")?.Value
+                             ?? principal.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value;
+
+                if (Guid.TryParse(oidString, out var oid))
+                    _deactivated = await UserSync.IsDeactivatedAsync(oid);
+
+                // Phase 3: wire to Entra group claim.
+                // For now, no admin access — add your Entra ObjectId here temporarily
+                // during development to see admin nav items:
+                // _isAdmin = oidString == "your-own-entra-object-id";
+                _isAdmin = false;
+
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error during user sync in MainLayout");
+        }
+    }
+
+    private void ToggleSidebar() => _sidebarOpen = !_sidebarOpen;
+}

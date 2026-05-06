@@ -1,0 +1,64 @@
+<MudNavMenu Dense="true" Class="pa-2" Style="height: 100%; display: flex; flex-direction: column;">
+
+    <MudText Typo="MudBlazor.Typo.overline"
+             Class="px-3 pt-3 pb-1"
+             Style="color: var(--mud-palette-text-secondary); font-size: 11px; letter-spacing: 0.08em;">
+        Your work
+    </MudText>
+
+    <MudNavLink Href="/" Match="NavLinkMatch.All"
+                Icon="@Icons.Material.Outlined.GridView">
+        Dashboard
+    </MudNavLink>
+
+    <MudNavLink Href="/work" Match="NavLinkMatch.Prefix"
+                Icon="@Icons.Material.Outlined.Inbox">
+        Work items
+    </MudNavLink>
+
+    <MudNavLink Href="/history" Match="NavLinkMatch.Prefix"
+                Icon="@Icons.Material.Outlined.History">
+        My history
+    </MudNavLink>
+
+    @if (IsAdmin)
+    {
+        <MudDivider Class="my-2" />
+        <MudText Typo="MudBlazor.Typo.overline"
+                 Class="px-3 pt-1 pb-1"
+                 Style="color: var(--mud-palette-text-secondary); font-size: 11px; letter-spacing: 0.08em;">
+            Configuration
+        </MudText>
+        <MudNavLink Href="/admin/entities" Match="NavLinkMatch.Prefix"
+                    Icon="@Icons.Material.Outlined.Business">Entities</MudNavLink>
+        <MudNavLink Href="/admin/roles" Match="NavLinkMatch.Prefix"
+                    Icon="@Icons.Material.Outlined.Badge">Roles</MudNavLink>
+        <MudNavLink Href="/admin/templates" Match="NavLinkMatch.Prefix"
+                    Icon="@Icons.Material.Outlined.AccountTree">Workflow templates</MudNavLink>
+        <MudNavLink Href="/admin/users" Match="NavLinkMatch.Prefix"
+                    Icon="@Icons.Material.Outlined.People">Users</MudNavLink>
+
+        <MudDivider Class="my-2" />
+        <MudText Typo="MudBlazor.Typo.overline"
+                 Class="px-3 pt-1 pb-1"
+                 Style="color: var(--mud-palette-text-secondary); font-size: 11px; letter-spacing: 0.08em;">
+            Operations
+        </MudText>
+        <MudNavLink Href="/admin/periods" Match="NavLinkMatch.Prefix"
+                    Icon="@Icons.Material.Outlined.CalendarMonth">Period management</MudNavLink>
+        <MudNavLink Href="/admin/active-workflows" Match="NavLinkMatch.Prefix"
+                    Icon="@Icons.Material.Outlined.Bolt">Active workflows</MudNavLink>
+        <MudNavLink Href="/admin/audit" Match="NavLinkMatch.Prefix"
+                    Icon="@Icons.Material.Outlined.ManageSearch">Audit search</MudNavLink>
+    }
+
+    <MudSpacer />
+    <MudDivider Class="my-2" />
+    <MudNavLink Href="/settings" Match="NavLinkMatch.Prefix"
+                Icon="@Icons.Material.Outlined.Settings">Settings</MudNavLink>
+
+</MudNavMenu>
+
+@code {
+    [Parameter] public bool IsAdmin { get; set; }
+}
