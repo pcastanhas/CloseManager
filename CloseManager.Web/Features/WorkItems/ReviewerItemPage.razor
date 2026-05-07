@@ -121,14 +121,14 @@
                                      : Icons.Material.Outlined.RadioButtonUnchecked)"
                                  Style="@($"font-size:14px;color:{(item.ReviewerStatus == "Approved" ? "#1D9E75" : item.ReviewerStatus == "NeedsRevision" ? "#F59E0B" : "var(--mud-palette-text-disabled)")}")" />
                         <MudText Typo="Typo.body2" Style="font-size:12px;flex:1">@item.Text</MudText>
-                        @if (item.Comments.Any())
+                        @if (item.ItemComments.Any())
                         {
                             <MudIcon Icon="@Icons.Material.Outlined.Comment"
                                      Style="font-size:12px;color:var(--mud-palette-text-secondary)" />
-                            <span style="font-size:10px;color:var(--mud-palette-text-secondary)">@item.Comments.Count</span>
+                            <span style="font-size:10px;color:var(--mud-palette-text-secondary)">@item.ItemComments.Count</span>
                         }
                     </div>
-                    @foreach (var c in item.Comments)
+                    @foreach (var c in item.ItemComments)
                     {
                         <div class="ml-5 mb-1 pa-2"
                              style="border-left:2px solid var(--mud-palette-divider);font-size:11px">
