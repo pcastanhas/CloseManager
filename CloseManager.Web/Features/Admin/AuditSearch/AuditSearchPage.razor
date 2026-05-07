@@ -186,7 +186,7 @@
                         Showing @((_page - 1) * PageSize + 1)–@(Math.Min(_page * PageSize, _totalCount)) of @_totalCount
                     </MudText>
                     <MudPagination Count="@((int)Math.Ceiling(_totalCount / (double)PageSize))"
-                                   @bind-Selected="_page" SelectedChanged="@(_ => SearchAsync())"
+                                   @bind-Selected="_page" @bind-Selected:after="SearchAsync"
                                    Size="Size.Small" />
                 </div>
             }
