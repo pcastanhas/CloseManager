@@ -4,13 +4,30 @@ This doc captures where the design session left off, what's decided, what's open
 
 ## Where we are
 
-Design phase. No code has been written. The repository contains:
+**Implementation in progress — Phase 7 next (reviewer flow).**
 
-- A full schema (`docs/schema/schema.sql`) covering users, entities, workflow templates (versioned with IsCurrent bit), multi-stage workstreams, files, checklists, comments, and audit events
-- Schema design decisions (`docs/schema/design-decisions.md`) — the why behind specific schema choices, including the simplified template versioning model
-- Lifecycle walkthrough (`docs/schema/lifecycle-walkthrough.md`) — current; written against the post-refactor schema using a 3-stage example, with SQL framed as the bodies of the named stored procedures
-- Ten design docs in `docs/design/` covering portfolio view, reviewer queue, reviewer item page, preparer flow, app shell, tech stack, multi-entity considerations, active workflows, workflow templates editor, and period management
-- Mockups README in `docs/mockups/` indexing the visual sketches produced in chat
+Design is complete. Implementation is 6 phases deep. The repository contains:
+
+**Design docs (complete):**
+- Full schema (`docs/schema/schema.sql`), design decisions (`docs/schema/design-decisions.md`), lifecycle walkthrough (`docs/schema/lifecycle-walkthrough.md`)
+- 16 design docs in `docs/design/` covering all screens and admin pages
+- `BUILDPLAN.md` — 9-phase implementation plan with per-phase test checklist
+
+**Code — solution structure:**
+```
+CloseManager.sln
+  CloseManager.Web/        — Blazor Server app (net8.0, target net9.0 when available)
+  CloseManager.Tests/      — xUnit + bUnit + Testcontainers
+```
+
+**Implemented so far (Phases 1–6):**
+
+Phase 1 — Scaffold + Entra SSO + MudBlazor + Serilog + Hangfire + app shell (sidebar, nav, identity card)
+Phase 2 — Full EF Core entity model + AppDbContext with all relationships; migration README; Phase 2 schema tests
+Phase 3 — AuditService, AppSettingService, CurrentUserService; Roles, Users, Audit Search, Settings pages (full implementations); SettingRow component; JS interop for CSV download; Phase 3 tests
+Phase 4 — Entities list + detail (Workflow/Roles/History tabs, EntityRoleAssignment management); Workflow Templates list + editor (working copy, approver modal, save dialog, navigate-away protection); Phase 4 tests
+Phase 5 — Period SPs (sp_AssertPeriodOpen, sp_OpenPeriod, sp_ClosePeriod, sp_ReopenPeriod, sp_CloseEntityInPeriod, sp_ExpireLocks); PeriodService (Dapper wrappers + summary queries); OpenPeriodJob (Hangfire + SignalR progress); LockExpirySweepJob (recurring every 2min); PeriodProgressHub; PeriodsPage (full UI with live progress, close/reopen dialogs, typed confirm phrase, entity early-close); Phase 5 tests
+Phase 6 — Preparer SPs (sp_AcquireLock, sp_SubmitWorkstream, sp_ApproveChecklistItem, sp_FlagChecklistItemWithComment); WorkstreamService (Dapper wrappers + work-items UNION query + dashboard query); SharePointService (Graph client, large-file upload); DashboardPage (portfolio grid, period-not-opened banner); WorkItemsPage (two sections, WorkItemTile component); PreparerItemPage (/work/{id}: file upload, version pills, checklist, submit dialog, locked-by-you banner); Phase 6 tests
 
 ## To-do, in rough priority order
 
@@ -38,12 +55,22 @@ Design phase. No code has been written. The repository contains:
 
 ### Implementation kickoff
 
-- [ ] Set up the .NET solution. Recommended: ASP.NET Core 9 + Blazor Server, EF Core 9 + Dapper for hot paths, MudBlazor, Microsoft.Identity.Web, Hangfire, Serilog. Rationale in `docs/design/06-tech-stack.md`.
-- [ ] Implement the schema as EF Core migrations, applied via deployment pipeline.
-- [ ] Build stored procedures for state transitions. The full list, with bodies sketched in `docs/schema/lifecycle-walkthrough.md` and `docs/design/10-period-management.md`: `sp_OpenPeriod` (per-entity instantiation, called in a loop by Hangfire), `sp_ClosePeriod` / `sp_ReopenPeriod` / `sp_CloseEntityInPeriod` (period lifecycle), `sp_AssertPeriodOpen` (helper called by every state-transition SP — closed-period write freeze), `sp_AcquireLock` (lock + role check), `sp_SubmitWorkstream` (stage 0 → stage 1, also handles round increment on resubmit from NeedsRevision), `sp_AdvanceStage` (non-final stage advance), `sp_SendBackToStage` (rewind to a chosen earlier stage), `sp_ApproveFinal` (final stage → Approved), `sp_ApproveChecklistItem` (item Approved), `sp_FlagChecklistItemWithComment` (item NeedsRevision + Comment in one transaction), `sp_SaveTemplate` (template versioning save), `sp_RefreshChecklistFromTemplate` (additive in-flight refresh), `sp_RebuildWorkstream` (admin restart), `sp_ClearLock` (admin force-clear), `sp_ExpireLocks` (Hangfire auto-expiry).
-- [ ] Set up Entra SSO and confirm Microsoft Graph access to SharePoint (`Sites.Selected` permission on the specific site).
-- [ ] Build out the app shell first — sidebar, top bar, routing, role-based nav visibility.
-- [ ] Build the Dashboard (portfolio view) next — most users land here on first login.
+- [x] Set up the .NET solution — net8.0 (upgrade csproj to net9.0 when available), Blazor Server, EF Core 8, Dapper, MudBlazor, Microsoft.Identity.Web, Hangfire, Serilog. Done in Phase 1.
+- [x] Implement the schema as EF Core entity model. Migration README at `CloseManager.Web/Data/Migrations/README.md`. Run `dotnet ef migrations add` + apply `PeriodSps.sql` and `PreparerSps.sql` locally. Done in Phase 2.
+- [x] `sp_AssertPeriodOpen`, `sp_OpenPeriod`, `sp_ClosePeriod`, `sp_ReopenPeriod`, `sp_CloseEntityInPeriod`, `sp_ExpireLocks` — Done in Phase 5 (`Data/StoredProcedures/PeriodSps.sql`)
+- [x] `sp_AcquireLock`, `sp_SubmitWorkstream`, `sp_ApproveChecklistItem`, `sp_FlagChecklistItemWithComment` — Done in Phase 6 (`Data/StoredProcedures/PreparerSps.sql`)
+- [x] Set up Entra SSO — Done in Phase 1. SharePoint/Graph credentials go in AppSetting table (Settings page). Done in Phase 6.
+- [x] App shell (sidebar, top bar, routing, role-based nav) — Done in Phase 1.
+- [x] Dashboard (portfolio view, period-not-opened banner) — Done in Phase 6.
+
+**Remaining SPs to build (Phase 7–8):**
+- [ ] `sp_AdvanceStage` — reviewer non-final stage advance (Phase 7)
+- [ ] `sp_SendBackToStage` — one-step send-back, CurrentStageIndex--, Round++ (Phase 7)
+- [ ] `sp_ApproveFinal` — final stage → Status=Approved (Phase 7)
+- [ ] `sp_SaveTemplate` — already stubbed in TemplateEditorPage; needs to be extracted to a real SP (Phase 4 used EF directly; extract to SP in Phase 7 or 8)
+- [ ] `sp_RefreshChecklistFromTemplate` — additive in-flight refresh (Phase 8)
+- [ ] `sp_RebuildWorkstream` — admin restart (Phase 8)
+- [ ] `sp_ClearLock` — admin force-clear (Phase 8)
 
 ### Future enhancements (deliberately not v1)
 
@@ -128,6 +155,66 @@ This is the running log of design decisions, captured to avoid re-litigating the
 45. **Lock expiry tooltip added to Work Items locked tiles.** "Locked 43 minutes ago · expires in 2 minutes" appears on hover, giving the waiting person context on whether to wait or come back. Low effort, high clarity.
 46. **Unsaved-changes browser warning added to template editor.** A `beforeunload` event fires when the working copy has changes and the user tries to navigate away. Prevents accidental loss of large restructures.
 
+## What to build next — Phase 7 (reviewer flow)
+
+Phase 7 adds the reviewer-side state transitions and completes the core close cycle.
+
+### SPs to write (Data/StoredProcedures/ReviewerSps.sql)
+
+**sp_AdvanceStage(@WorkstreamId, @UserId, @ActorEntraOid)**
+- Assert period open
+- Assert all ChecklistItems for current stage have ReviewerStatus = 'Approved'
+- Stamp current stage Outcome = 'Advanced', CompletedAtUtc, CompletedByUserId
+- Enter next stage (set EnteredAtUtc)
+- CurrentStageIndex++, release lock
+- Audit event: 'StageAdvanced'
+
+**sp_SendBackToStage(@WorkstreamId, @UserId, @ActorEntraOid, @Reason)**
+- Assert period open
+- Assert CurrentStageIndex > 0 (cannot send back from stage 0)
+- Stamp current stage Outcome = 'SentBack'
+- Clear prior stage Outcome/CompletedAt/CompletedByUserId (re-enter cleanly)
+- CurrentStageIndex--, Round++, Status = 'NeedsRevision', release lock
+- Audit event: 'SentBack' with Reason in Notes
+
+**sp_ApproveFinal(@WorkstreamId, @UserId, @ActorEntraOid)**
+- Assert period open
+- Assert all ChecklistItems for current stage have ReviewerStatus = 'Approved'
+- Assert current WorkstreamStage.IsFinalApproval = 1
+- Stamp stage Outcome = 'Advanced', CompletedAtUtc
+- Status = 'Approved', ApprovedAtUtc, ApprovedByUserId, release lock
+- Audit event: 'FinalApproved'
+
+### Pages to build
+
+**ReviewerItemPage** — extends PreparerItemPage pattern for the reviewer role
+- Route: `/work/{workstreamId}` (same route, different view based on CurrentStageIndex)
+  - At CurrentStageIndex = 0 and user is Preparer → show PreparerItemPage
+  - At CurrentStageIndex > 0 and user matches stage role → show ReviewerItemPage
+  - Detect which view to render in the page's OnInitializedAsync by querying role
+- Stage indicator header: "Stage 2 of 3 · Senior review (final)"
+- Checklist: stage-scoped items with Approve / Flag buttons (call SPs)
+- Flag dialog: reason-only (no stage picker — one-step send-back)
+- Advance/"Finalize" button: locked until all items Approved; label adapts to IsFinalApproval
+- "Needs revision" button: opens reason dialog → calls sp_SendBackToStage
+- Audit trail strip: single compact chronological mode (from AuditEvent)
+- Prior stages accordion: read-only view of completed stages' checklists/comments
+- File version pill row (same as preparer — reviewer needs to see version chain)
+- Locked-by-you banner (same pattern as preparer)
+
+**My History page** (`/history`) — currently placeholder
+- Timeline grouped by calendar date, action chip filters, period dropdown
+- Expandable rows for BeforeJson/AfterJson
+- CSV export
+- Deep-links from other pages
+
+### Tests
+- sp_AdvanceStage: advances stage, blocks if checklist items unresolved
+- sp_ApproveFinal: sets Status=Approved, blocks if not on final stage or items unresolved
+- sp_SendBackToStage: CurrentStageIndex--, Round++, prior stage cleared, throws at stage 0
+- Full 3-stage happy path: submit → advance stage 1 → advance stage 2 (final) → Status=Approved
+- Send-back re-advance: assert round++, stage reverts and re-advances correctly
+
 ## Things to be wary of when implementing
 
 - **The audit trail must be non-bypassable.** Implement state transitions as stored procedures that do the state change and the audit insert in one transaction. Application code calls the procedures rather than issuing UPDATEs directly.
@@ -136,8 +223,7 @@ This is the running log of design decisions, captured to avoid re-litigating the
 - **Don't conflate operational logging with the business audit trail.** Serilog → file/Application Insights for ops; `AuditEvent` table for SOX-relevant business audit. Both exist; they're separate.
 - **Status transitions are conditional.** Use `WHERE Status = 'X'` clauses on UPDATEs to prevent re-firing transitions; use `@@ROWCOUNT` to detect "someone got there first" cases.
 - **`EntraObjectId` is denormalized into `AuditEvent`** so the audit trail remains intelligible for years after a User row has been soft-deleted.
-- **The multi-stage rewind rule sets `RewoundToStageIndex`** on the `WorkstreamStage` row that initiated the rewind, not on the rewind target. This captures the intent for audit.
-- **Round only counts stage-0 submissions.** A workstream that bounces between stages 1 and 2 without involving the preparer doesn't increment Round.
+- **Send-back is one step only — no `RewoundToStageIndex`.** The column was removed (decision #28). The audit event's Notes JSON captures fromStage/toStage. Round increments on every send-back, not just stage-0 submissions (decision #27).
 
 ## Open questions for next conversation
 
@@ -154,7 +240,7 @@ These came up during design but were deferred. Worth revisiting before implement
 
 - **GitHub repo:** https://github.com/pcastanhas/CloseManager
 - **Branch:** main
-- **Last commit at writeup time:** Templates editor with workstream cards + indented approver cards + edit modal pattern
+- **Last commit at writeup time:** Phase 6 complete — preparer flow, SharePoint service, Work Items, Dashboard, PreparerItemPage
 - **Git author identity:** Set as `pcastanhas <pcastanhas@users.noreply.github.com>` (GitHub noreply email)
 - **Authentication:** A GitHub PAT was used during the design session for pushing commits. **That PAT must be rotated** if it hasn't been already; it was leaked in the conversation log. Future commits should use a fresh PAT or SSH from a controlled environment.
 
