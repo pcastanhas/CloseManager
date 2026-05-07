@@ -30,10 +30,12 @@
 @* ── Locked-by-you banner ── *@
 @if (_isLockedBySelf)
 {
-    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3"
-              Action="@("Take over lock")"
-              OnClick="@(async () => await AcquireLockAsync())">
-        You have this workstream open in another session. Click to take over the lock in this window.
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">
+        You have this workstream open in another session.
+        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
+                   OnClick="@(async () => await AcquireLockAsync())">
+            Take over lock
+        </MudButton>
     </MudAlert>
 }
 
