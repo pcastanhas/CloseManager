@@ -1,10 +1,616 @@
 @page "/admin/periods"
 @attribute [Authorize]
+@inject PeriodService Periods
+@inject CurrentUserService CurrentUser
+@inject AppSettingService Settings
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@using CloseManager.Web.Data.Services
+@using Hangfire
+@implements IAsyncDisposable
+@using Microsoft.AspNetCore.SignalR.Client
 
 <PageTitle>Period management — CloseManager</PageTitle>
 
-<MudText Typo="Typo.caption" Style="color: var(--mud-palette-text-secondary);" Class="mb-1">Operations</MudText>
-<MudText Typo="Typo.h6" Style="font-weight:500;" Class="mb-4">Period management</MudText>
-<MudText Typo="Typo.body2" Style="color: var(--mud-palette-text-secondary);">
-    Open, close and reopen periods — implemented in Phase 5.
-</MudText>
+<div class="d-flex align-center justify-space-between mb-4">
+    <div>
+        <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">Operations</MudText>
+        <MudText Typo="Typo.h6" Style="font-weight:500">Period management</MudText>
+    </div>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+               StartIcon="@Icons.Material.Outlined.Add"
+               OnClick="@(() => _openDialogVisible = true)">
+        Open period
+    </MudButton>
+</div>
+
+@* ── Periods list ── *@
+@if (_summaries is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (!_summaries.Any())
+{
+    <div class="d-flex flex-column align-center justify-center pa-12" style="gap:12px">
+        <MudIcon Icon="@Icons.Material.Outlined.CalendarMonth"
+                 Style="font-size:48px;color:var(--mud-palette-text-secondary)" />
+        <MudText Typo="Typo.body1" Style="color:var(--mud-palette-text-secondary)">
+            No periods yet. Open the first period to start the close process.
+        </MudText>
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Outlined.Add"
+                   OnClick="@(() => _openDialogVisible = true)">
+            Open your first period
+        </MudButton>
+    </div>
+}
+else
+{
+    @foreach (var s in _summaries)
+    {
+        <MudPaper Elevation="0" Class="mb-3"
+                  Style="border:0.5px solid var(--mud-palette-divider);border-radius:4px;overflow:hidden">
+
+            @* Period row header *@
+            <div class="d-flex align-center gap-3 pa-3"
+                 style="cursor:pointer"
+                 @onclick="@(() => ToggleDetail(s.Period))">
+                <div style="flex:1">
+                    <div class="d-flex align-center gap-2 mb-1">
+                        <MudText Typo="Typo.body1" Style="font-weight:500">@s.PeriodLabel</MudText>
+                        @if (_openingPeriods.ContainsKey(s.Period))
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Info"
+                                     Style="font-size:10px;height:18px">
+                                Opening…
+                            </MudChip>
+                        }
+                        else if (s.IsClosed)
+                        {
+                            <span class="pill pill-neutral">Closed</span>
+                        }
+                        else if (s.IsClosingSoon)
+                        {
+                            <span class="pill pill-warning">Closing soon</span>
+                        }
+                        else
+                        {
+                            <span class="pill pill-success">Open</span>
+                        }
+                    </div>
+                    <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                        @s.EntityCount entities ·
+                        @s.ApprovedWorkstreams of @s.TotalWorkstreams workstreams approved
+                        (@s.ApprovalPct.ToString("0")%)
+                        · opened @FormatRelative(s.OpenedAtUtc)
+                        @if (s.IsClosed && s.ClosedAtUtc.HasValue)
+                        { <span> · closed @FormatRelative(s.ClosedAtUtc.Value)</span> }
+                    </MudText>
+                </div>
+
+                @* Progress bar *@
+                <div style="width:120px">
+                    <MudProgressLinear Value="@s.ApprovalPct" Color="Color.Success"
+                                       Rounded="true" Style="height:6px" />
+                </div>
+
+                @* Live progress during open *@
+                @if (_openingPeriods.TryGetValue(s.Period, out var prog))
+                {
+                    <MudText Typo="Typo.caption" Style="width:140px;color:var(--mud-palette-text-secondary)">
+                        @prog.Completed / @prog.Total entities
+                    </MudText>
+                }
+
+                @* Actions *@
+                <div class="d-flex gap-1" @onclick:stopPropagation="true">
+                    @if (!s.IsClosed && !_openingPeriods.ContainsKey(s.Period))
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                                   OnClick="@(() => InitiateClose(s))">Close</MudButton>
+                    }
+                    @if (s.IsClosed)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined"
+                                   OnClick="@(() => InitiateReopen(s))">Reopen</MudButton>
+                    }
+                </div>
+
+                <MudIcon Icon="@(_expandedPeriod == s.Period
+                    ? Icons.Material.Outlined.ExpandLess
+                    : Icons.Material.Outlined.ExpandMore)"
+                         Style="color:var(--mud-palette-text-secondary)" />
+            </div>
+
+            @* Entity detail expansion *@
+            @if (_expandedPeriod == s.Period && _entityRows.TryGetValue(s.Period, out var rows))
+            {
+                <div style="border-top:0.5px solid var(--mud-palette-divider)">
+                    @if (_loadingDetail)
+                    {
+                        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+                    }
+                    else
+                    {
+                        @foreach (var row in rows)
+                        {
+                            <div class="d-flex align-center gap-3 pa-2 px-4"
+                                 style="border-bottom:0.5px solid var(--mud-palette-divider);font-size:13px">
+                                <MudIcon Icon="@EntityStatusIcon(row)"
+                                         Style="@($"font-size:10px;color:{EntityStatusColor(row)}")" />
+                                <div style="flex:1">
+                                    <span style="font-weight:500">@row.EntityName</span>
+                                    <code style="font-size:11px;color:var(--mud-palette-text-secondary);margin-left:4px">
+                                        @row.EntityCode
+                                    </code>
+                                    <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary);display:block">
+                                        @row.EntityTypeName
+                                    </MudText>
+                                </div>
+                                <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                                    @row.ApprovedWorkstreams/@row.TotalWorkstreams approved
+                                </MudText>
+                                @if (row.IsEntityClosed)
+                                {
+                                    <span class="pill pill-neutral" style="font-size:10px">Closed early</span>
+                                }
+                                else if (row.AllApproved && !s.IsClosed)
+                                {
+                                    <MudButton Size="Size.Small" Variant="Variant.Text"
+                                               Color="Color.Success"
+                                               OnClick="@(() => InitiateEntityClose(row))">
+                                        Close early
+                                    </MudButton>
+                                }
+                            </div>
+                        }
+
+                        @* Add entity *@
+                        @if (!s.IsClosed)
+                        {
+                            <div class="pa-3 px-4">
+                                <MudButton Size="Size.Small" StartIcon="@Icons.Material.Outlined.Add"
+                                           Variant="Variant.Text"
+                                           OnClick="@(() => InitiateAddEntity(s.Period))">
+                                    Add entity to this period
+                                </MudButton>
+                            </div>
+                        }
+                    }
+                </div>
+            }
+        </MudPaper>
+    }
+}
+
+@* ─────────────── OPEN PERIOD DIALOG ─────────────── *@
+<MudDialog @bind-IsVisible="_openDialogVisible"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Open period</MudText>
+    </TitleContent>
+    <DialogContent>
+
+        @* Period picker *@
+        <MudText Typo="Typo.subtitle2" Class="mb-2">Period</MudText>
+        <div class="d-flex gap-2 align-center mb-4">
+            <MudSelect T="int" @bind-Value="_openYear" Label="Year"
+                       Variant="Variant.Outlined" Margin="Margin.Dense" Style="width:100px">
+                @for (var y = DateTime.UtcNow.Year - 1; y <= DateTime.UtcNow.Year + 1; y++)
+                { <MudSelectItem Value="@y">@y</MudSelectItem> }
+            </MudSelect>
+            <MudSelect T="int" @bind-Value="_openMonth" Label="Month"
+                       Variant="Variant.Outlined" Margin="Margin.Dense" Style="width:120px">
+                @for (var m = 1; m <= 12; m++)
+                { <MudSelectItem Value="@m">@System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(m)</MudSelectItem> }
+            </MudSelect>
+            <MudText Typo="Typo.body2" Style="color:var(--mud-palette-text-secondary)">
+                → @new DateTime(_openYear, _openMonth, 1).ToString("yyyyMM")
+            </MudText>
+        </div>
+
+        @* Entity selection *@
+        <MudText Typo="Typo.subtitle2" Class="mb-1">Entities to include</MudText>
+        <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary);display:block;margin-bottom:8px">
+            Defaults to entities from the most recent period. Deselect any that should not be included.
+        </MudText>
+        <MudTextField @bind-Value="_entitySearch" Placeholder="Search entities…"
+                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Outlined.Search"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true"
+                      Style="max-width:260px" Class="mb-2" />
+
+        <div style="max-height:280px;overflow-y:auto;border:0.5px solid var(--mud-palette-divider);border-radius:4px">
+            @foreach (var e in FilteredOpenEntities)
+            {
+                <div class="d-flex align-center gap-2 pa-2"
+                     style="border-bottom:0.5px solid var(--mud-palette-divider);font-size:13px">
+                    <MudCheckBox @bind-Value="e.Selected" Color="Color.Primary"
+                                 Size="Size.Small" />
+                    <div>
+                        <span style="font-weight:500">@e.Name</span>
+                        <code style="font-size:11px;color:var(--mud-palette-text-secondary);margin-left:4px">
+                            @e.Code
+                        </code>
+                    </div>
+                    <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                        @e.EntityTypeName
+                    </MudText>
+                </div>
+            }
+        </div>
+        <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary);margin-top:4px">
+            @_openEntities.Count(e => e.Selected) of @_openEntities.Count entities selected
+        </MudText>
+
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _openDialogVisible = false)">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   Disabled="@(_openEntities.All(e => !e.Selected) || _saving)"
+                   OnClick="OpenPeriodAsync">
+            @if (_saving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
+            else { <span>Open period</span> }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@* ─────────────── CLOSE PERIOD DIALOG ─────────────── *@
+<MudDialog @bind-IsVisible="_closeDialogVisible"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Close @_actionTarget?.PeriodLabel</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_actionTarget is not null)
+        {
+            <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Style="font-size:12px">
+                <strong>@(_actionTarget.TotalWorkstreams - _actionTarget.ApprovedWorkstreams)</strong>
+                workstream(s) are not yet approved and will be frozen in their current state.
+                They cannot advance until the period is reopened.
+            </MudAlert>
+        }
+        <MudTextField Label="Reason (required)" @bind-Value="_actionReason"
+                      Lines="3" Placeholder="Why are you closing? Include audit context for any not-yet-approved workstreams…"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3" />
+        <MudTextField Label="Type to confirm"
+                      @bind-Value="_confirmPhrase"
+                      Placeholder="@($"close {_actionTarget?.Period}")"
+                      HelperText="@($"Type: close {_actionTarget?.Period}")"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _closeDialogVisible = false)">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Error"
+                   Disabled="@(!ClosePhraseValid() || string.IsNullOrWhiteSpace(_actionReason) || _saving)"
+                   OnClick="ClosePeriodAsync">
+            @if (_saving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
+            else { <span>Close period</span> }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@* ─────────────── REOPEN DIALOG ─────────────── *@
+<MudDialog @bind-IsVisible="_reopenDialogVisible"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Reopen @_actionTarget?.PeriodLabel</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-3">
+            <strong>@_actionTarget?.EntityCount entities</strong> and their frozen workstreams
+            will become editable again.
+        </MudText>
+        <MudTextField Label="Reason (required)" @bind-Value="_actionReason"
+                      Lines="2" Placeholder="Why are you reopening this closed period?"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _reopenDialogVisible = false)">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   Disabled="@(string.IsNullOrWhiteSpace(_actionReason) || _saving)"
+                   OnClick="ReopenPeriodAsync">
+            @if (_saving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
+            else { <span>Reopen period</span> }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@* ─────────────── ENTITY CLOSE EARLY DIALOG ─────────────── *@
+<MudDialog @bind-IsVisible="_entityCloseDialogVisible"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Close @_entityCloseTarget?.EntityName early</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-3">
+            All workstreams for this entity are approved. Closing it early will
+            lock its workstreams while the rest of the period remains open.
+        </MudText>
+        <MudTextField Label="Reason (required)" @bind-Value="_actionReason"
+                      Lines="2" Placeholder="Why are you closing this entity early?"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _entityCloseDialogVisible = false)">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   Disabled="@(string.IsNullOrWhiteSpace(_actionReason) || _saving)"
+                   OnClick="CloseEntityAsync">
+            @if (_saving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
+            else { <span>Close entity</span> }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    class SelectableEntity
+    {
+        public long EntityId { get; set; }
+        public string Code { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string EntityTypeName { get; set; } = string.Empty;
+        public bool Selected { get; set; } = true;
+    }
+
+    record OpenProgress(int Completed, int Total);
+
+    // ── Page state ────────────────────────────────────────────────────────────
+    private List<PeriodSummary>? _summaries;
+    private string? _expandedPeriod;
+    private bool _loadingDetail;
+    private Dictionary<string, List<PeriodEntityRow>> _entityRows = [];
+    private Dictionary<string, OpenProgress> _openingPeriods = [];
+    private bool _saving;
+
+    // SignalR
+    private HubConnection? _hubConnection;
+
+    // Open dialog
+    private bool _openDialogVisible;
+    private int _openYear = DateTime.UtcNow.Year;
+    private int _openMonth = DateTime.UtcNow.Month;
+    private List<SelectableEntity> _openEntities = [];
+    private string _entitySearch = string.Empty;
+
+    // Close / reopen dialogs
+    private bool _closeDialogVisible, _reopenDialogVisible, _entityCloseDialogVisible;
+    private PeriodSummary? _actionTarget;
+    private PeriodEntityRow? _entityCloseTarget;
+    private string _actionReason = string.Empty;
+    private string _confirmPhrase = string.Empty;
+
+    private IEnumerable<SelectableEntity> FilteredOpenEntities => _openEntities
+        .Where(e => string.IsNullOrWhiteSpace(_entitySearch)
+                 || e.Name.Contains(_entitySearch, StringComparison.OrdinalIgnoreCase)
+                 || e.Code.Contains(_entitySearch, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSummariesAsync();
+        await ConnectSignalRAsync();
+        await SeedOpenDialogAsync();
+    }
+
+    private async Task LoadSummariesAsync()
+        => _summaries = await Periods.GetPeriodSummariesAsync();
+
+    private async Task SeedOpenDialogAsync()
+    {
+        var entities = await Periods.GetActiveEntitiesAsync();
+        var priorPeriod = await Periods.GetMostRecentPeriodAsync();
+        var priorEntityIds = priorPeriod is null
+            ? new List<long>()
+            : await Periods.GetEntityIdsInPeriodAsync(priorPeriod);
+
+        _openEntities = entities.Select(e => new SelectableEntity
+        {
+            EntityId = e.EntityId, Code = e.Code,
+            Name = e.Name, EntityTypeName = e.EntityTypeName,
+            Selected = priorEntityIds.Contains(e.EntityId) || !priorEntityIds.Any()
+        }).ToList();
+
+        // Default open period to next month after most recent
+        if (priorPeriod is not null
+            && DateTime.TryParseExact(priorPeriod, "yyyyMM",
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var dt))
+        {
+            var next = dt.AddMonths(1);
+            _openYear = next.Year;
+            _openMonth = next.Month;
+        }
+    }
+
+    // ── SignalR connection ────────────────────────────────────────────────────
+    private async Task ConnectSignalRAsync()
+    {
+        _hubConnection = new HubConnectionBuilder()
+            .WithUrl(Nav.ToAbsoluteUri("/hubs/period-progress"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        _hubConnection.On<object>("Progress", async msg =>
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(msg);
+            var doc = System.Text.Json.JsonDocument.Parse(json).RootElement;
+            var period = doc.GetProperty("Period").GetString() ?? "";
+            var completed = doc.GetProperty("Completed").GetInt32();
+            var total = doc.GetProperty("Total").GetInt32();
+
+            _openingPeriods[period] = new OpenProgress(completed, total);
+            await InvokeAsync(StateHasChanged);
+        });
+
+        _hubConnection.On<object>("Completed", async msg =>
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(msg);
+            var doc = System.Text.Json.JsonDocument.Parse(json).RootElement;
+            var period = doc.GetProperty("Period").GetString() ?? "";
+
+            _openingPeriods.Remove(period);
+            await LoadSummariesAsync();
+            await InvokeAsync(StateHasChanged);
+        });
+
+        await _hubConnection.StartAsync();
+    }
+
+    // ── Detail expansion ──────────────────────────────────────────────────────
+    private async Task ToggleDetail(string period)
+    {
+        if (_expandedPeriod == period) { _expandedPeriod = null; return; }
+        _expandedPeriod = period;
+
+        if (!_entityRows.ContainsKey(period))
+        {
+            _loadingDetail = true;
+            StateHasChanged();
+            _entityRows[period] = await Periods.GetPeriodEntityRowsAsync(period);
+            _loadingDetail = false;
+        }
+
+        if (_hubConnection?.State == HubConnectionState.Connected)
+            await _hubConnection.SendAsync("JoinPeriodGroup", period);
+    }
+
+    // ── Open period ───────────────────────────────────────────────────────────
+    private async Task OpenPeriodAsync()
+    {
+        var period = $"{_openYear}{_openMonth:00}";
+        var selectedIds = _openEntities.Where(e => e.Selected).Select(e => e.EntityId).ToArray();
+        if (!selectedIds.Any()) return;
+
+        _saving = true;
+        try
+        {
+            var actorId  = await CurrentUser.GetUserIdAsync();
+            var actorOid = await CurrentUser.GetEntraObjectIdAsync();
+
+            _openingPeriods[period] = new OpenProgress(0, selectedIds.Length);
+            _openDialogVisible = false;
+
+            // Enqueue Hangfire job
+            BackgroundJob.Enqueue<OpenPeriodJob>(j =>
+                j.ExecuteAsync(period, selectedIds, actorId, actorOid, null));
+
+            await LoadSummariesAsync();
+            Snackbar.Add($"Opening {new DateTime(_openYear, _openMonth, 1):MMMM yyyy} in the background…",
+                Severity.Info);
+        }
+        finally { _saving = false; }
+    }
+
+    // ── Close period ──────────────────────────────────────────────────────────
+    private void InitiateClose(PeriodSummary s)
+    {
+        _actionTarget = s; _actionReason = _confirmPhrase = string.Empty;
+        _closeDialogVisible = true;
+    }
+
+    private bool ClosePhraseValid()
+        => _confirmPhrase.Trim().Equals(
+            $"close {_actionTarget?.Period}", StringComparison.OrdinalIgnoreCase);
+
+    private async Task ClosePeriodAsync()
+    {
+        if (_actionTarget is null) return;
+        _saving = true;
+        try
+        {
+            var actorId  = await CurrentUser.GetUserIdAsync();
+            var actorOid = await CurrentUser.GetEntraObjectIdAsync();
+            await Periods.ClosePeriodAsync(_actionTarget.Period, actorId, actorOid, _actionReason);
+            _closeDialogVisible = false;
+            await LoadSummariesAsync();
+            Snackbar.Add($"{_actionTarget.PeriodLabel} closed", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add($"Close failed: {ex.Message}", Severity.Error); }
+        finally { _saving = false; }
+    }
+
+    // ── Reopen period ─────────────────────────────────────────────────────────
+    private void InitiateReopen(PeriodSummary s)
+    {
+        _actionTarget = s; _actionReason = string.Empty;
+        _reopenDialogVisible = true;
+    }
+
+    private async Task ReopenPeriodAsync()
+    {
+        if (_actionTarget is null) return;
+        _saving = true;
+        try
+        {
+            var actorId  = await CurrentUser.GetUserIdAsync();
+            var actorOid = await CurrentUser.GetEntraObjectIdAsync();
+            await Periods.ReopenPeriodAsync(_actionTarget.Period, actorId, actorOid, _actionReason);
+            _reopenDialogVisible = false;
+            await LoadSummariesAsync();
+            Snackbar.Add($"{_actionTarget.PeriodLabel} reopened", Severity.Info);
+        }
+        catch (Exception ex) { Snackbar.Add($"Reopen failed: {ex.Message}", Severity.Error); }
+        finally { _saving = false; }
+    }
+
+    // ── Close entity early ────────────────────────────────────────────────────
+    private void InitiateEntityClose(PeriodEntityRow row)
+    {
+        _entityCloseTarget = row; _actionReason = string.Empty;
+        _entityCloseDialogVisible = true;
+    }
+
+    private async Task CloseEntityAsync()
+    {
+        if (_entityCloseTarget is null) return;
+        _saving = true;
+        try
+        {
+            var actorId  = await CurrentUser.GetUserIdAsync();
+            var actorOid = await CurrentUser.GetEntraObjectIdAsync();
+            await Periods.CloseEntityInPeriodAsync(
+                _entityCloseTarget.ClosePeriodId, actorId, actorOid, _actionReason);
+            _entityCloseDialogVisible = false;
+            if (_expandedPeriod is not null)
+            {
+                _entityRows.Remove(_expandedPeriod);
+                _entityRows[_expandedPeriod] = await Periods.GetPeriodEntityRowsAsync(_expandedPeriod);
+            }
+            Snackbar.Add($"{_entityCloseTarget.EntityName} closed early", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add($"Failed: {ex.Message}", Severity.Error); }
+        finally { _saving = false; }
+    }
+
+    // ── Add entity ─────────────────────────────────────────────────────────
+    private void InitiateAddEntity(string period)
+    {
+        // Opens the open-dialog scoped to a specific period — simplified for Phase 5
+        // Full implementation: filter to entities NOT already in this period
+        Snackbar.Add("Add-entity to existing period: coming in Phase 5 detail pass", Severity.Info);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    private static string FormatRelative(DateTime dt)
+    {
+        var diff = DateTime.UtcNow - dt;
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalHours < 24)   return $"{(int)diff.TotalHours}h ago";
+        if (diff.TotalDays < 30)    return $"{(int)diff.TotalDays}d ago";
+        return dt.ToString("MMM d, yyyy");
+    }
+
+    private static string EntityStatusIcon(PeriodEntityRow row) =>
+        row.AllApproved ? Icons.Material.Outlined.CheckCircle
+        : row.NeedsRevisionWorkstreams > 0 ? Icons.Material.Outlined.Error
+        : Icons.Material.Outlined.Schedule;
+
+    private static string EntityStatusColor(PeriodEntityRow row) =>
+        row.AllApproved ? "#1D9E75"
+        : row.NeedsRevisionWorkstreams > 0 ? "#E24B4A"
+        : "#EF9F27";
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hubConnection is not null)
+            await _hubConnection.DisposeAsync();
+    }
+}

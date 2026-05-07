@@ -1,6 +1,7 @@
 using CloseManager.Web.Auth;
 using CloseManager.Web.Data;
 using CloseManager.Web.Data.Services;
+using CloseManager.Web.Jobs;
 using Hangfire;
 using Hangfire.SqlServer;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -69,7 +70,11 @@ try
     builder.Services.AddScoped<AuditService>();
     builder.Services.AddScoped<AppSettingService>();
     builder.Services.AddScoped<CurrentUserService>();
+    builder.Services.AddScoped<PeriodService>();
     builder.Services.AddHttpContextAccessor();
+
+    // SignalR for period-open progress
+    builder.Services.AddSignalR();
 
     // Admin group ID for role-gating
     builder.Services.Configure<AdminOptions>(options =>
@@ -99,7 +104,14 @@ try
     app.UseHangfireDashboard(app.Configuration["Hangfire:DashboardPath"] ?? "/hangfire");
     app.MapControllers();
     app.MapBlazorHub();
+    app.MapHub<PeriodProgressHub>("/hubs/period-progress");
     app.MapFallbackToPage("/_Host");
+
+    // Register recurring Hangfire jobs
+    RecurringJob.AddOrUpdate<LockExpirySweepJob>(
+        "lock-expiry-sweep",
+        j => j.ExecuteAsync(),
+        "*/2 * * * *");  // every 2 minutes
     app.Run();
 }
 catch (Exception ex) when (ex is not HostAbortedException)
