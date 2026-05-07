@@ -1,9 +1,189 @@
 @page "/"
 @attribute [Authorize]
+@inject WorkstreamService WorkstreamSvc
+@inject CurrentUserService CurrentUser
+@inject NavigationManager Nav
+@using CloseManager.Web.Data.Services
+@using Microsoft.AspNetCore.Components.Authorization
 
 <PageTitle>Dashboard — CloseManager</PageTitle>
 
-<MudText Typo="Typo.h6" Style="font-weight:500;" Class="mb-4">Dashboard</MudText>
-<MudText Typo="Typo.body2" Style="color: var(--mud-palette-text-secondary);">
-    Portfolio view — implemented in Phase 6.
-</MudText>
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (_period is null)
+{
+    @* Period-not-opened banner *@
+    <MudAlert Severity="Severity.Info" Class="mb-4">
+        <strong>The @DateTime.UtcNow.ToString("MMMM yyyy") close hasn't been opened yet.</strong>
+        Contact your admin to open it — your workstreams will appear here once it's open.
+    </MudAlert>
+}
+else
+{
+    <div class="d-flex align-center justify-space-between mb-4">
+        <div>
+            <MudText Typo="Typo.h6" Style="font-weight:500">Dashboard</MudText>
+            <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                @FormatPeriod(_period) · @_totalWorkstreams workstreams ·
+                @_approvedWorkstreams approved
+            </MudText>
+        </div>
+    </div>
+
+    @* Entity groups by type *@
+    @foreach (var typeGroup in _byEntityType)
+    {
+        var allHealthy = typeGroup.Entities.All(eg =>
+            eg.Workstreams.All(w => w.Status == "Approved"));
+        var stuckCount = typeGroup.Entities
+            .SelectMany(eg => eg.Workstreams)
+            .Count(w => w.IsStuck);
+        var atRiskCount = typeGroup.Entities
+            .SelectMany(eg => eg.Workstreams)
+            .Count(w => w.Status is "NeedsRevision" or "InProgress" && !w.IsStuck);
+
+        <div class="mb-4">
+            @* Type header *@
+            <div class="d-flex align-center gap-2 mb-2">
+                <MudText Typo="Typo.overline"
+                         Style="font-size:10px;letter-spacing:0.08em;color:var(--mud-palette-text-secondary)">
+                    @typeGroup.EntityTypeName
+                </MudText>
+                @if (allHealthy)
+                {
+                    <span class="pill pill-success" style="font-size:10px">healthy</span>
+                }
+                else
+                {
+                    if (stuckCount > 0)
+                    { <span class="pill pill-error" style="font-size:10px">@stuckCount stuck</span> }
+                    if (atRiskCount > 0)
+                    { <span class="pill pill-warning" style="font-size:10px">@atRiskCount at risk</span> }
+                }
+            </div>
+
+            @* Entity rows *@
+            @foreach (var entityGroup in typeGroup.Entities)
+            {
+                <div class="d-flex align-center gap-2 mb-2"
+                     style="border:0.5px solid var(--mud-palette-divider);
+                            border-radius:4px;padding:8px 12px;background:white">
+                    @* Entity label *@
+                    <div style="width:160px;flex-shrink:0">
+                        <MudText Typo="Typo.body2" Style="font-weight:500;font-size:12px;
+                                 white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                            @entityGroup.EntityName
+                        </MudText>
+                        <code style="font-size:10px;color:var(--mud-palette-text-secondary)">
+                            @entityGroup.EntityCode
+                        </code>
+                    </div>
+
+                    @* Workstream tiles *@
+                    <div class="d-flex gap-2" style="flex:1;flex-wrap:wrap">
+                        @foreach (var ws in entityGroup.Workstreams)
+                        {
+                            <MudTooltip Text="@WsTileTooltip(ws)">
+                                <div style="@WsTileStyle(ws)"
+                                     @onclick="@(() => Nav.NavigateTo($"/work/{ws.WorkstreamId}"))">
+                                    <div style="font-size:11px;font-weight:500;
+                                                white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                                        @ws.WorkstreamName
+                                    </div>
+                                    <div style="font-size:10px;color:inherit;opacity:0.8">
+                                        @WsTileSubtext(ws)
+                                    </div>
+                                </div>
+                            </MudTooltip>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    record TypeGroup(string EntityTypeName, List<EntityGroup> Entities);
+    record EntityGroup(long EntityId, string EntityName, string EntityCode,
+                       List<DashboardEntityRow> Workstreams);
+
+    private bool _loading = true;
+    private string? _period;
+    private List<TypeGroup> _byEntityType = [];
+    private int _totalWorkstreams, _approvedWorkstreams;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var userId = await CurrentUser.GetUserIdAsync();
+        _period = await WorkstreamSvc.GetCurrentPeriodAsync();
+
+        if (_period is not null)
+        {
+            var rows = await WorkstreamSvc.GetDashboardAsync(userId, _period);
+            _totalWorkstreams = rows.Count;
+            _approvedWorkstreams = rows.Count(r => r.Status == "Approved");
+            BuildEntityGroups(rows);
+        }
+
+        _loading = false;
+    }
+
+    private void BuildEntityGroups(List<DashboardEntityRow> rows)
+    {
+        _byEntityType = rows
+            .GroupBy(r => r.EntityTypeName)
+            .OrderBy(g => g.Key)
+            .Select(g => new TypeGroup(
+                g.Key,
+                g.GroupBy(r => r.EntityId)
+                 .OrderBy(eg => eg.First().EntityName)
+                 .Select(eg => new EntityGroup(
+                     eg.Key,
+                     eg.First().EntityName,
+                     eg.First().EntityCode,
+                     eg.OrderBy(w => w.OrderIndex).ToList()
+                 )).ToList()
+            )).ToList();
+    }
+
+    private static string WsTileStyle(DashboardEntityRow ws)
+    {
+        var (bg, fg) = ws.Status switch
+        {
+            "Approved"       => ("#E8F5E9", "#1B5E20"),
+            "NeedsRevision"  => ("#FFEBEE", "#B71C1C"),
+            "InProgress" when ws.IsStuck => ("#FFF3E0", "#E65100"),
+            "InProgress"     => ("#E3F2FD", "#0D47A1"),
+            _                => ("#F5F5F5", "#424242")  // NotStarted
+        };
+        return $"min-width:90px;max-width:140px;flex:1;padding:5px 8px;border-radius:4px;" +
+               $"background:{bg};color:{fg};cursor:pointer;border:0.5px solid {bg};";
+    }
+
+    private static string WsTileTooltip(DashboardEntityRow ws)
+    {
+        var age = ws.CurrentStageEnteredAt.HasValue
+            ? $" · {(int)(DateTime.UtcNow - ws.CurrentStageEnteredAt.Value).TotalHours}h"
+            : string.Empty;
+        return $"{ws.WorkstreamName} · {ws.Status}" +
+               (ws.CurrentRoleName is not null ? $" · w/ {ws.CurrentRoleName}{age}" : string.Empty);
+    }
+
+    private static string WsTileSubtext(DashboardEntityRow ws) => ws.Status switch
+    {
+        "Approved"      => "approved",
+        "NeedsRevision" => "sent back",
+        "NotStarted"    => "not started",
+        "InProgress"    => ws.CurrentRoleName is not null ? $"w/ {ws.CurrentRoleName}" : "in progress",
+        _               => ws.Status
+    };
+
+    private static string FormatPeriod(string period) =>
+        DateTime.TryParseExact(period, "yyyyMM",
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var d)
+        ? d.ToString("MMMM yyyy") : period;
+}

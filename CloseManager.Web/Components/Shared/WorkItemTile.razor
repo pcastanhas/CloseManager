@@ -1,0 +1,105 @@
+@using CloseManager.Web.Data.Services
+
+<div style="@TileStyle" @onclick="OnClick" class="work-item-tile">
+    <div class="d-flex align-center justify-space-between mb-1">
+        <div class="d-flex align-center gap-1" style="min-width:0;flex:1">
+            <MudIcon Icon="@(Item.IsPreparer ? Icons.Material.Outlined.RateReview : Icons.Material.Outlined.EditNote)"
+                     Style="font-size:15px;color:var(--mud-palette-text-secondary);flex-shrink:0" />
+            <MudText Typo="Typo.body2" Style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                @Item.WorkstreamName
+            </MudText>
+            <code style="font-size:10px;color:var(--mud-palette-text-secondary);flex-shrink:0">
+                @Item.Code
+            </code>
+        </div>
+        <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary);flex-shrink:0;margin-left:8px">
+            @Item.PeriodLabel
+        </MudText>
+    </div>
+
+    <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary);margin-bottom:6px">
+        @Item.EntityName · <code style="font-size:10px">@Item.EntityCode</code>
+    </MudText>
+
+    <div class="d-flex align-center gap-2 mb-2" style="flex-wrap:wrap">
+        @* Role badge *@
+        <span style="font-size:10px;font-weight:500;padding:2px 7px;border-radius:20px;
+                     background:#E1F5EE;color:#0F6E56;flex-shrink:0">
+            @Item.UserRoleName
+        </span>
+
+        @* Stage chain (reviewer items) or status (preparer items) *@
+        @if (Item.IsPreparer)
+        {
+            <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                @(Item.Status == "NeedsRevision" ? "Sent back" : Item.Status)
+                @if (Item.Round > 1) { <span> · Round @Item.Round</span> }
+            </MudText>
+        }
+        else
+        {
+            <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                Stage @Item.CurrentStageIndex · @Item.UserRoleName
+            </MudText>
+        }
+    </div>
+
+    <div class="d-flex align-center justify-space-between">
+        @* Waiting label *@
+        @if (Item.IsLocked && Item.LockedByUserId != UserId)
+        {
+            <MudTooltip Text="@($"Locked {(Item.LockExpiresAtUtc.HasValue ? $"· expires {FormatExpiry(Item.LockExpiresAtUtc.Value)}" : "")}")">
+                <div class="d-flex align-center gap-1">
+                    <MudIcon Icon="@Icons.Material.Outlined.Lock"
+                             Style="font-size:12px;color:var(--mud-palette-text-disabled)" />
+                    <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-disabled)">
+                        Locked by @Item.LockedByName
+                    </MudText>
+                </div>
+            </MudTooltip>
+        }
+        else if (Item.IsLocked && Item.LockedByUserId == UserId)
+        {
+            <MudText Typo="Typo.caption" Style="color:#EF9F27">
+                Locked by you (another session)
+            </MudText>
+        }
+        else
+        {
+            <MudText Typo="Typo.caption" Style="@(Item.Status == "NeedsRevision" ? "color:#A32D2D;font-weight:500" : "color:var(--mud-palette-text-secondary)")">
+                @Item.WaitingLabel
+            </MudText>
+        }
+
+        @* Checklist progress (reviewer items) *@
+        @if (!Item.IsPreparer && Item.TotalItems > 0)
+        {
+            <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                @Item.ReadyItems / @Item.TotalItems
+            </MudText>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public WorkItemRow Item { get; set; } = null!;
+    [Parameter] public long UserId { get; set; }
+    [Parameter] public string BorderColor { get; set; } = "var(--mud-palette-divider)";
+    [Parameter] public EventCallback OnClick { get; set; }
+
+    private string TileStyle => $@"
+        border:0.5px solid var(--mud-palette-divider);
+        border-left:3px solid {BorderColor};
+        border-radius:0 4px 4px 0;
+        background:white;
+        padding:10px 12px;
+        cursor:pointer;
+        {(Item.IsLocked && Item.LockedByUserId != UserId ? "opacity:0.65;" : "")}";
+
+    private static string FormatExpiry(DateTime dt)
+    {
+        var diff = dt - DateTime.UtcNow;
+        if (diff.TotalMinutes < 1) return "< 1 min";
+        return $"{(int)diff.TotalMinutes} min";
+    }
+}

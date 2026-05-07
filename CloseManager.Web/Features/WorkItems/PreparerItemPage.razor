@@ -1,0 +1,469 @@
+@page "/work/{WorkstreamId:long}"
+@attribute [Authorize]
+@inject AppDbContext Db
+@inject WorkstreamService WorkstreamSvc
+@inject Graph.SharePointService SharePoint
+@inject CurrentUserService CurrentUser
+@inject AppSettingService Settings
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+@using CloseManager.Web.Data
+@using CloseManager.Web.Data.Entities
+@using CloseManager.Web.Data.Services
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>@(_workstream?.Name ?? "Workstream") — CloseManager</PageTitle>
+
+@if (_workstream is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    return;
+}
+
+@* ── Breadcrumb ── *@
+<div class="d-flex align-center gap-1 mb-3" style="font-size:13px;color:var(--mud-palette-text-secondary)">
+    <MudLink Href="/work">Work items</MudLink>
+    <MudIcon Icon="@Icons.Material.Outlined.ChevronRight" Style="font-size:14px" />
+    <span>@_workstream.Name</span>
+</div>
+
+@* ── Locked-by-you banner ── *@
+@if (_isLockedBySelf)
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3"
+              Action="@("Take over lock")"
+              OnClick="@(async () => await AcquireLockAsync())">
+        You have this workstream open in another session. Click to take over the lock in this window.
+    </MudAlert>
+}
+
+@* ── NeedsRevision banner ── *@
+@if (_workstream.Status == "NeedsRevision")
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">
+        @(_lastSendBackComment is not null
+            ? $"Sent back with a note: \"{_lastSendBackComment}\""
+            : "This workstream was sent back for revision.")
+        · Round @_workstream.Round
+    </MudAlert>
+}
+
+@* ── Page header ── *@
+<div class="d-flex align-center justify-space-between mb-4">
+    <div>
+        <MudText Typo="Typo.h6" Style="font-weight:500">@_workstream.Name</MudText>
+        <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+            @_entityName · @FormatPeriod(_workstream.Period) · Round @_workstream.Round
+        </MudText>
+    </div>
+    <div class="d-flex gap-2">
+        @if (!_lockHeld)
+        {
+            <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                       Disabled="@_acquiringLock"
+                       OnClick="AcquireLockAsync">
+                @if (_acquiringLock)
+                { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
+                else { <span>Claim to edit</span> }
+            </MudButton>
+        }
+        else
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                       Disabled="@(!_hasPrimaryFile || _submitting)"
+                       OnClick="@(() => _submitDialogOpen = true)">
+                Submit for review
+                @if (!_hasPrimaryFile)
+                { <span style="font-size:10px;opacity:0.7"> (upload primary file first)</span> }
+            </MudButton>
+        }
+    </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 340px;gap:1.5rem;align-items:start">
+
+    @* ── Left: file upload + version history ── *@
+    <div>
+        @* File version pills *@
+        @if (_files.Any())
+        {
+            <div class="d-flex align-center gap-2 mb-3" style="flex-wrap:wrap">
+                @foreach (var (f, i) in _files.Select((f, i) => (f, i)))
+                {
+                    <MudTooltip Text="@($"Uploaded {f.UploadedAt:MMM d} by {f.UploadedBy}")">
+                        <MudButton Size="Size.Small"
+                                   Variant="@(i == _files.Count - 1 ? Variant.Filled : Variant.Outlined)"
+                                   Color="@(i == _files.Count - 1 ? Color.Primary : Color.Default)"
+                                   OnClick="@(() => _selectedFileUrl = f.WebUrl)">
+                            v@(i + 1) @(i == _files.Count - 1 ? "(current)" : "")
+                        </MudButton>
+                    </MudTooltip>
+                }
+            </div>
+        }
+
+        @* Primary file upload zone *@
+        @if (_lockHeld)
+        {
+            <MudPaper Elevation="0" Class="mb-4 pa-4"
+                      Style="border:1.5px dashed var(--mud-palette-divider);border-radius:4px;
+                             text-align:center;cursor:pointer"
+                      @ondragover:preventDefault="true"
+                      @ondrop="HandleDrop">
+                <MudIcon Icon="@Icons.Material.Outlined.CloudUpload"
+                         Style="font-size:32px;color:var(--mud-palette-text-secondary)" />
+                <MudText Typo="Typo.body2" Style="color:var(--mud-palette-text-secondary)">
+                    @if (_files.Any())
+                    { <span>Drop a new version to replace v@_files.Count · creates v@(_files.Count + 1)</span> }
+                    else
+                    { <span>Drop your primary file here or click to browse</span> }
+                </MudText>
+                <InputFile id="fileInput" OnChange="HandleFileSelected" style="display:none"
+                           accept=".xlsx,.xls,.pdf,.csv,.docx" />
+                <label for="fileInput">
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small" Class="mt-2"
+                               HtmlTag="span" Style="cursor:pointer">
+                        Browse files
+                    </MudButton>
+                </label>
+                @if (_uploading)
+                {
+                    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-2" />
+                    <MudText Typo="Typo.caption">Uploading…</MudText>
+                }
+            </MudPaper>
+        }
+        else if (_files.Any())
+        {
+            @* Show current file info when not locked *@
+            <MudPaper Elevation="0" Class="mb-4 pa-3"
+                      Style="border:0.5px solid var(--mud-palette-divider);border-radius:4px">
+                <MudText Typo="Typo.body2" Style="font-weight:500">@_files.Last().FileName</MudText>
+                <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                    v@_files.Count · @_files.Last().UploadedAt.ToString("MMM d, yyyy") ·
+                    @_files.Last().UploadedBy
+                </MudText>
+                <MudLink Href="@_files.Last().WebUrl" Target="_blank" Style="font-size:12px">
+                    Open in SharePoint →
+                </MudLink>
+            </MudPaper>
+        }
+        else
+        {
+            <MudAlert Severity="Severity.Info" Dense="true" Class="mb-4">
+                Claim the workstream to edit and upload files.
+            </MudAlert>
+        }
+
+        @* Comments *@
+        <MudText Typo="Typo.subtitle2" Class="mb-2">Comments</MudText>
+        @foreach (var comment in _comments)
+        {
+            <div class="mb-3 pa-3"
+                 style="border:0.5px solid var(--mud-palette-divider);border-radius:4px">
+                <div class="d-flex align-center justify-space-between mb-1">
+                    <MudText Typo="Typo.body2" Style="font-weight:500;font-size:13px">
+                        @comment.AuthorName
+                    </MudText>
+                    <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                        @comment.PostedAt.ToString("MMM d, HH:mm")
+                    </MudText>
+                </div>
+                <MudText Typo="Typo.body2" Style="font-size:13px">@comment.Body</MudText>
+            </div>
+        }
+        @if (_lockHeld)
+        {
+            <div class="d-flex gap-2">
+                <MudTextField @bind-Value="_newComment" Placeholder="Add a comment…"
+                              Variant="Variant.Outlined" Margin="Margin.Dense"
+                              Style="flex:1" />
+                <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                           Disabled="@string.IsNullOrWhiteSpace(_newComment)"
+                           OnClick="PostCommentAsync">Post</MudButton>
+            </div>
+        }
+    </div>
+
+    @* ── Right: checklist ── *@
+    <div>
+        <div class="d-flex align-center justify-space-between mb-2">
+            <MudText Typo="Typo.subtitle2">Checklist</MudText>
+            <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                @_checklist.Count(c => c.PreparerStatus == "Ready") / @_checklist.Count marked ready
+            </MudText>
+        </div>
+        @foreach (var item in _checklist)
+        {
+            <div class="mb-2 pa-2"
+                 style="border:0.5px solid var(--mud-palette-divider);border-radius:4px;
+                        background:@(item.PreparerStatus == "Ready" ? "#F0FAF6" : "white")">
+                <div class="d-flex align-center gap-2">
+                    <MudIcon Icon="@(item.PreparerStatus == "Ready"
+                                 ? Icons.Material.Outlined.CheckCircle
+                                 : Icons.Material.Outlined.RadioButtonUnchecked)"
+                             Style="@($"font-size:16px;color:{(item.PreparerStatus == "Ready" ? "#1D9E75" : "var(--mud-palette-text-disabled)")}")" />
+                    <MudText Typo="Typo.body2" Style="font-size:13px;flex:1">@item.Text</MudText>
+                    @if (_lockHeld)
+                    {
+                        @if (item.PreparerStatus != "Ready")
+                        {
+                            <MudButton Size="Size.Small" Variant="Variant.Text"
+                                       Color="Color.Success"
+                                       OnClick="@(() => MarkReadyAsync(item))">
+                                Mark ready
+                            </MudButton>
+                        }
+                        else
+                        {
+                            <MudButton Size="Size.Small" Variant="Variant.Text"
+                                       OnClick="@(() => UnmarkReadyAsync(item))">
+                                Undo
+                            </MudButton>
+                        }
+                    }
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@* ── Submit dialog ── *@
+<MudDialog @bind-IsVisible="_submitDialogOpen"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Submit for review · Round @_workstream.Round</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-2">
+            <strong>@_checklist.Count(c => c.PreparerStatus == "Ready")</strong> of
+            @_checklist.Count items marked ready.
+        </MudText>
+        <MudTextField Label="Note (optional)" @bind-Value="_submitNote"
+                      Lines="2" Placeholder="Any notes for the reviewer…"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _submitDialogOpen = false)">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   Disabled="@_submitting" OnClick="SubmitAsync">
+            @if (_submitting) { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
+            else { <span>Submit</span> }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [Parameter] public long WorkstreamId { get; set; }
+
+    record FileRow(string FileName, string WebUrl, DateTime UploadedAt, string UploadedBy);
+    record CommentRow(string AuthorName, DateTime PostedAt, string Body);
+    record ChecklistRow(long ChecklistItemId, string Text, string PreparerStatus);
+
+    private Workstream? _workstream;
+    private string _entityName = string.Empty;
+    private string? _lastSendBackComment;
+    private List<FileRow> _files = [];
+    private List<CommentRow> _comments = [];
+    private List<ChecklistRow> _checklist = [];
+
+    private long _userId;
+    private Guid _actorOid;
+    private bool _lockHeld, _isLockedBySelf, _acquiringLock;
+    private bool _hasPrimaryFile;
+    private bool _uploading, _submitting;
+    private string? _selectedFileUrl;
+    private string _newComment = string.Empty;
+    private bool _submitDialogOpen;
+    private string _submitNote = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _userId  = await CurrentUser.GetUserIdAsync();
+        _actorOid = await CurrentUser.GetEntraObjectIdAsync();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _workstream = await Db.Workstreams
+            .FirstOrDefaultAsync(w => w.WorkstreamId == WorkstreamId && !w.IsDeleted);
+
+        if (_workstream is null) { Nav.NavigateTo("/work"); return; }
+
+        _entityName = await Db.Entities
+            .Where(e => e.EntityId == _workstream.EntityId)
+            .Select(e => e.Name).FirstOrDefaultAsync() ?? string.Empty;
+
+        _lockHeld = _workstream.LockedByUserId == _userId
+                    && _workstream.LockExpiresAtUtc > DateTime.UtcNow;
+
+        _isLockedBySelf = _workstream.LockedByUserId == _userId && !_lockHeld;
+
+        _files = await Db.WorkstreamFiles
+            .Where(f => f.WorkstreamId == WorkstreamId && !f.IsDeleted)
+            .OrderBy(f => f.UploadedAtUtc)
+            .Select(f => new FileRow(f.FileName, f.SpWebUrl, f.UploadedAtUtc, f.UploadedBy.DisplayName))
+            .ToListAsync();
+
+        _hasPrimaryFile = await Db.WorkstreamFiles
+            .AnyAsync(f => f.WorkstreamId == WorkstreamId && f.FileRole == "Primary" && !f.IsDeleted);
+
+        _comments = await Db.Comments
+            .Where(c => c.WorkstreamId == WorkstreamId && !c.IsDeleted && c.ChecklistItemId == null)
+            .OrderBy(c => c.PostedAtUtc)
+            .Select(c => new CommentRow(c.Author.DisplayName, c.PostedAtUtc, c.Body))
+            .ToListAsync();
+
+        _lastSendBackComment = await Db.AuditEvents
+            .Where(e => e.WorkstreamId == WorkstreamId && e.Action == "SentBack")
+            .OrderByDescending(e => e.OccurredAtUtc)
+            .Select(e => e.Notes)
+            .FirstOrDefaultAsync();
+
+        _checklist = await Db.ChecklistItems
+            .Where(ci => ci.WorkstreamId == WorkstreamId
+                      && ci.WorkstreamStageId == Db.WorkstreamStages
+                           .Where(ws => ws.WorkstreamId == WorkstreamId && ws.OrderIndex == 1)
+                           .Select(ws => ws.WorkstreamStageId).FirstOrDefault()
+                      && !ci.IsDeleted)
+            .OrderBy(ci => ci.OrderIndex)
+            .Select(ci => new ChecklistRow(ci.ChecklistItemId, ci.Text, ci.PreparerStatus))
+            .ToListAsync();
+    }
+
+    private async Task AcquireLockAsync()
+    {
+        _acquiringLock = true;
+        var lockMinutes = await Settings.GetLockDurationMinutesAsync();
+        var acquired = await WorkstreamSvc.AcquireLockAsync(WorkstreamId, _userId, _actorOid, lockMinutes);
+        if (!acquired)
+            Snackbar.Add("Could not claim this workstream — it may be locked by another user.", Severity.Warning);
+        await LoadAsync();
+        _acquiringLock = false;
+    }
+
+    private async Task HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file is null) return;
+        await UploadFileAsync(file.Name, file.OpenReadStream(maxAllowedSize: 50 * 1024 * 1024));
+    }
+
+    private async Task HandleDrop(DragEventArgs _)
+    {
+        // Drag-drop handled via JS interop in production; simplified here
+        Snackbar.Add("Drag-drop: use the browse button for now (drag-drop requires JS interop setup)", Severity.Info);
+    }
+
+    private async Task UploadFileAsync(string fileName, Stream stream)
+    {
+        _uploading = true;
+        StateHasChanged();
+        try
+        {
+            if (!await Settings.IsSharePointConfiguredAsync())
+            {
+                Snackbar.Add("SharePoint is not configured. Configure it in Settings first.", Severity.Error);
+                return;
+            }
+
+            var entity = await Db.Entities.FindAsync(_workstream!.EntityId);
+            var result = await SharePoint.UploadFileAsync(
+                entity?.Code ?? "UNKNOWN",
+                _workstream.Period,
+                _workstream.Code,
+                fileName,
+                stream);
+
+            var priorPrimary = await Db.WorkstreamFiles
+                .Where(f => f.WorkstreamId == WorkstreamId && f.FileRole == "Primary" && !f.IsDeleted)
+                .OrderByDescending(f => f.UploadedAtUtc)
+                .FirstOrDefaultAsync();
+
+            var fileRow = new WorkstreamFile
+            {
+                WorkstreamId   = WorkstreamId,
+                FileRole       = "Primary",
+                SpDriveId      = result.SpDriveId,
+                SpItemId       = result.SpItemId,
+                SpWebUrl       = result.SpWebUrl,
+                SpRelativePath = result.SpRelativePath,
+                FileName       = fileName,
+                FileExtension  = Path.GetExtension(fileName),
+                UploadedAtUtc  = DateTime.UtcNow,
+                UploadedByUserId = _userId,
+                ReplacesFileId = priorPrimary?.WorkstreamFileId
+            };
+            Db.WorkstreamFiles.Add(fileRow);
+
+            // Transition status to InProgress on first upload
+            if (_workstream!.Status == "NotStarted")
+                _workstream.Status = "InProgress";
+
+            await Db.SaveChangesAsync();
+            Snackbar.Add("File uploaded", Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Upload failed: {ex.Message}", Severity.Error);
+        }
+        finally { _uploading = false; }
+    }
+
+    private async Task MarkReadyAsync(ChecklistRow item)
+    {
+        try
+        {
+            await WorkstreamSvc.ApproveChecklistItemAsync(item.ChecklistItemId, _userId, _actorOid);
+            await LoadAsync();
+        }
+        catch (Exception ex) { Snackbar.Add(ex.Message, Severity.Error); }
+    }
+
+    private async Task UnmarkReadyAsync(ChecklistRow item)
+    {
+        var ci = await Db.ChecklistItems.FindAsync(item.ChecklistItemId);
+        if (ci is null) return;
+        ci.PreparerStatus = "NotReady";
+        ci.PreparerMarkedAtUtc = null;
+        ci.PreparerMarkedByUserId = null;
+        await Db.SaveChangesAsync();
+        await LoadAsync();
+    }
+
+    private async Task PostCommentAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newComment)) return;
+        Db.Comments.Add(new Comment
+        {
+            WorkstreamId = WorkstreamId, AuthorUserId = _userId,
+            PostedAtUtc = DateTime.UtcNow, Body = _newComment
+        });
+        await Db.SaveChangesAsync();
+        _newComment = string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task SubmitAsync()
+    {
+        _submitting = true;
+        try
+        {
+            await WorkstreamSvc.SubmitWorkstreamAsync(
+                WorkstreamId, _userId, _actorOid, _submitNote);
+            _submitDialogOpen = false;
+            Snackbar.Add("Submitted for review", Severity.Success);
+            Nav.NavigateTo("/work");
+        }
+        catch (Exception ex) { Snackbar.Add($"Submit failed: {ex.Message}", Severity.Error); }
+        finally { _submitting = false; }
+    }
+
+    private static string FormatPeriod(string period) =>
+        DateTime.TryParseExact(period, "yyyyMM",
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var d)
+        ? d.ToString("MMMM yyyy") : period;
+}

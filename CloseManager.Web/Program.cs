@@ -71,6 +71,8 @@ try
     builder.Services.AddScoped<AppSettingService>();
     builder.Services.AddScoped<CurrentUserService>();
     builder.Services.AddScoped<PeriodService>();
+    builder.Services.AddScoped<WorkstreamService>();
+    builder.Services.AddScoped<Graph.SharePointService>();
     builder.Services.AddHttpContextAccessor();
 
     // SignalR for period-open progress

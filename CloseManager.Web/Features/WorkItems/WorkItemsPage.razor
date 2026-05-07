@@ -1,9 +1,103 @@
 @page "/work"
 @attribute [Authorize]
+@inject WorkstreamService WorkstreamSvc
+@inject CurrentUserService CurrentUser
+@inject NavigationManager Nav
+@using CloseManager.Web.Data.Services
 
 <PageTitle>Work items — CloseManager</PageTitle>
 
-<MudText Typo="Typo.h6" Style="font-weight:500;" Class="mb-4">Work items</MudText>
-<MudText Typo="Typo.body2" Style="color: var(--mud-palette-text-secondary);">
-    Your action queue — implemented in Phase 6.
-</MudText>
+<div class="d-flex align-center justify-space-between mb-4">
+    <div>
+        <MudText Typo="Typo.h6" Style="font-weight:500">Work items</MudText>
+        <MudText Typo="Typo.body2" Style="color:var(--mud-palette-text-secondary)">
+            What's waiting on you right now
+            @if (_items is not null && _items.TotalCount > 0)
+            {
+                <strong style="color:var(--mud-palette-text-primary)"> · @_items.TotalCount item(s)</strong>
+            }
+        </MudText>
+    </div>
+</div>
+
+@if (_items is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (_items.TotalCount == 0)
+{
+    <div class="d-flex flex-column align-center justify-center" style="padding:5rem 0;gap:16px">
+        <MudIcon Icon="@Icons.Material.Outlined.CheckCircleOutline"
+                 Style="font-size:56px;color:var(--mud-palette-success)" />
+        <MudText Typo="Typo.h6" Style="font-weight:500">You're all caught up</MudText>
+        <MudText Typo="Typo.body2" Style="color:var(--mud-palette-text-secondary)">
+            No workstreams are waiting on you right now.
+        </MudText>
+        <MudButton Variant="Variant.Outlined" Href="/">View Dashboard</MudButton>
+    </div>
+}
+else
+{
+    @* ── Needs attention ── *@
+    @if (_items.NeedsAttention.Any())
+    {
+        <div class="mb-4">
+            <div class="d-flex align-center gap-2 mb-2"
+                 style="padding-bottom:8px;border-bottom:2px solid #E24B4A">
+                <MudIcon Icon="@Icons.Material.Outlined.Warning"
+                         Style="font-size:16px;color:#E24B4A" />
+                <MudText Typo="Typo.body2" Style="font-weight:500;color:#A32D2D">
+                    Needs attention
+                </MudText>
+                <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                    @_items.NeedsAttention.Count item(s)
+                </MudText>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                @foreach (var item in _items.NeedsAttention)
+                {
+                    <WorkItemTile Item="@item" UserId="@_userId"
+                                  BorderColor="#E24B4A"
+                                  OnClick="@(() => Nav.NavigateTo($"/work/{item.WorkstreamId}"))" />
+                }
+            </div>
+        </div>
+    }
+
+    @* ── Up next / In progress ── *@
+    @if (_items.UpNextAndInProgress.Any())
+    {
+        <div class="mb-4">
+            <div class="d-flex align-center gap-2 mb-2"
+                 style="padding-bottom:8px;border-bottom:2px solid #EF9F27">
+                <MudIcon Icon="@Icons.Material.Outlined.Inbox"
+                         Style="font-size:16px;color:#EF9F27" />
+                <MudText Typo="Typo.body2" Style="font-weight:500;color:#633806">
+                    Up next / In progress
+                </MudText>
+                <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                    @_items.UpNextAndInProgress.Count item(s)
+                </MudText>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                @foreach (var item in _items.UpNextAndInProgress)
+                {
+                    <WorkItemTile Item="@item" UserId="@_userId"
+                                  BorderColor="#EF9F27"
+                                  OnClick="@(() => Nav.NavigateTo($"/work/{item.WorkstreamId}"))" />
+                }
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private WorkItemsResult? _items;
+    private long _userId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _userId = await CurrentUser.GetUserIdAsync();
+        _items  = await WorkstreamSvc.GetWorkItemsAsync(_userId);
+    }
+}
