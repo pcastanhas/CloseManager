@@ -3,6 +3,7 @@
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
+    <NoWarn>$(NoWarn);CS8669</NoWarn>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>CloseManager.Web</RootNamespace>
     <!-- .NET 8 LTS — upgrade to net9.0 once available in your environment -->
