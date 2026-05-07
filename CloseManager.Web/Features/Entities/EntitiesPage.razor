@@ -100,23 +100,31 @@ else
                 </MudTd>
                 <MudTd>
                     <div class="d-flex gap-1">
-                        <MudIconButton Icon="@Icons.Material.Outlined.OpenInNew"
-                                       Size="Size.Small" Title="Open detail"
-                                       OnClick="@(() => Nav.NavigateTo($"/admin/entities/{context.EntityId}"))" />
-                        <MudIconButton Icon="@Icons.Material.Outlined.Edit"
-                                       Size="Size.Small" Title="Edit"
-                                       OnClick="@(() => OpenModal(context))" />
+                        <MudTooltip Text="Open detail">
+                            <MudIconButton Icon="@Icons.Material.Outlined.OpenInNew"
+                                           Size="Size.Small"
+                                           OnClick="@(() => Nav.NavigateTo($"/admin/entities/{context.EntityId}"))" />
+                        </MudTooltip>
+                        <MudTooltip Text="Edit">
+                            <MudIconButton Icon="@Icons.Material.Outlined.Edit"
+                                           Size="Size.Small"
+                                           OnClick="@(() => OpenModal(context))" />
+                        </MudTooltip>
                         @if (context.IsActive)
                         {
-                            <MudIconButton Icon="@Icons.Material.Outlined.Archive"
-                                           Size="Size.Small" Title="Deactivate"
-                                           OnClick="@(() => ConfirmDeactivate(context))" />
+                            <MudTooltip Text="Deactivate">
+                                <MudIconButton Icon="@Icons.Material.Outlined.Archive"
+                                               Size="Size.Small"
+                                               OnClick="@(() => ConfirmDeactivate(context))" />
+                            </MudTooltip>
                         }
                         else
                         {
-                            <MudIconButton Icon="@Icons.Material.Outlined.Unarchive"
-                                           Size="Size.Small" Title="Reactivate"
-                                           OnClick="@(() => ReactivateAsync(context))" />
+                            <MudTooltip Text="Reactivate">
+                                <MudIconButton Icon="@Icons.Material.Outlined.Unarchive"
+                                               Size="Size.Small"
+                                               OnClick="@(() => ReactivateAsync(context))" />
+                            </MudTooltip>
                         }
                     </div>
                 </MudTd>
