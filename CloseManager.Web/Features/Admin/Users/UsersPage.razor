@@ -102,20 +102,26 @@
                         </MudTd>
                         <MudTd>
                             <div class="d-flex gap-1">
-                                <MudIconButton Icon="@Icons.Material.Outlined.OpenInNew"
-                                               Size="Size.Small" Title="View assignments"
-                                               OnClick="@(() => SelectUser(context))" />
+                                <MudTooltip Text="View assignments">
+                                    <MudIconButton Icon="@Icons.Material.Outlined.OpenInNew"
+                                                   Size="Size.Small"
+                                                   OnClick="@(() => SelectUser(context))" />
+                                </MudTooltip>
                                 @if (context.IsActive)
                                 {
-                                    <MudIconButton Icon="@Icons.Material.Outlined.PersonOff"
-                                                   Size="Size.Small" Title="Deactivate"
-                                                   OnClick="@(() => ConfirmDeactivate(context))" />
+                                    <MudTooltip Text="Deactivate">
+                                        <MudIconButton Icon="@Icons.Material.Outlined.PersonOff"
+                                                       Size="Size.Small"
+                                                       OnClick="@(() => ConfirmDeactivate(context))" />
+                                    </MudTooltip>
                                 }
                                 else
                                 {
-                                    <MudIconButton Icon="@Icons.Material.Outlined.PersonAdd"
-                                                   Size="Size.Small" Title="Reactivate"
-                                                   OnClick="@(() => ReactivateAsync(context))" />
+                                    <MudTooltip Text="Reactivate">
+                                        <MudIconButton Icon="@Icons.Material.Outlined.PersonAdd"
+                                                       Size="Size.Small"
+                                                       OnClick="@(() => ReactivateAsync(context))" />
+                                    </MudTooltip>
                                 }
                             </div>
                         </MudTd>
