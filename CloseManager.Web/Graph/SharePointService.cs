@@ -54,7 +54,7 @@ public class SharePointService
         else
         {
             item = await client.Sites[siteId].Drives[driveId]
-                .Root.ItemWithPath(itemPath)
+                .Items[$"root:/{itemPath}:"]
                 .Content.PutAsync(fileStream, cancellationToken: ct);
         }
 
@@ -125,7 +125,7 @@ public class SharePointService
         CancellationToken ct)
     {
         var uploadSession = await client.Sites[siteId].Drives[driveId]
-            .Root.ItemWithPath(itemPath)
+            .Items[$"root:/{itemPath}:"]
             .CreateUploadSession
             .PostAsync(new Microsoft.Graph.Drives.Item.Items.Item.CreateUploadSession.CreateUploadSessionPostRequestBody
             {
