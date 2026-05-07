@@ -53,7 +53,7 @@ public class SharePointService
         }
         else
         {
-            item = await client.Sites[siteId].Drives[driveId]
+            item = await client.Drives[driveId]
                 .Items[$"root:/{itemPath}:"]
                 .Content.PutAsync(fileStream, cancellationToken: ct);
         }
@@ -78,7 +78,7 @@ public class SharePointService
         var client = await BuildClientAsync();
         var (siteId, driveId) = await GetSiteAndDriveAsync();
 
-        var drive = await client.Sites[siteId].Drives[driveId].GetAsync();
+        var drive = await client.Drives[driveId].GetAsync();
         var driveName = drive?.Name ?? "(unnamed)";
         var siteName = drive?.DriveType ?? "SharePoint";
         return $"Connected — {siteName} / {driveName}";
@@ -124,7 +124,7 @@ public class SharePointService
         Stream fileStream,
         CancellationToken ct)
     {
-        var uploadSession = await client.Sites[siteId].Drives[driveId]
+        var uploadSession = await client.Drives[driveId]
             .Items[$"root:/{itemPath}:"]
             .CreateUploadSession
             .PostAsync(new Microsoft.Graph.Drives.Item.Items.Item.CreateUploadSession.CreateUploadSessionPostRequestBody
