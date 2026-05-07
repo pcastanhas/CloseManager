@@ -138,7 +138,7 @@
                         <MudTd>
                             <MudIconButton Icon="@(context.IsExpanded ? Icons.Material.Outlined.ExpandLess : Icons.Material.Outlined.ChevronRight)"
                                            Size="Size.Small"
-                                           OnClick="@(() => context.IsExpanded = !context.IsExpanded)" />
+                                           OnClick="@(() => { context.IsExpanded = !context.IsExpanded; })" />
                         </MudTd>
                     </MudTr>
                     @if (context.IsExpanded)

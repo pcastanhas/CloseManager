@@ -205,7 +205,7 @@ else
                 { <MudSelectItem Value="@m">@System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(m)</MudSelectItem> }
             </MudSelect>
             <MudText Typo="Typo.body2" Style="color:var(--mud-palette-text-secondary)">
-                → @new DateTime(_openYear, _openMonth, 1).ToString("yyyyMM")
+                → @(new DateTime(_openYear, _openMonth, 1).ToString("yyyyMM"))
             </MudText>
         </div>
 

@@ -225,7 +225,7 @@ else
                 var label = g.Key == today               ? "Today"
                           : g.Key == today.AddDays(-1)   ? "Yesterday"
                           : g.Key.ToString("dddd, MMMM d");
-                return (label, g.OrderByDescending(e => e.OccurredAtUtc).ToList());
+                return (DateLabel: label, Events: g.OrderByDescending(e => e.OccurredAtUtc).ToList());
             })
             .ToList();
     }
