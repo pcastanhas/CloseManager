@@ -231,7 +231,7 @@
 </div>
 
 @* ── Submit dialog ── *@
-<MudDialog @bind-IsVisible="_submitDialogOpen"
+<MudDialog @bind-Visible="_submitDialogOpen"
            Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
     <TitleContent>
         <MudText Typo="Typo.h6">Submit for review · Round @_workstream.Round</MudText>

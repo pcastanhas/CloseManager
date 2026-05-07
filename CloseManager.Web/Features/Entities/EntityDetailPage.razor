@@ -189,7 +189,7 @@
 </MudTabs>
 
 @* ── Assign role modal ── *@
-<MudDialog @bind-IsVisible="_assignModalOpen"
+<MudDialog @bind-Visible="_assignModalOpen"
            Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
     <TitleContent>
         <MudText Typo="Typo.h6">Assign role — @_entity.Name</MudText>

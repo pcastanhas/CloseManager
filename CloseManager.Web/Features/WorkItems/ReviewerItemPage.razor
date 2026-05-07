@@ -368,7 +368,7 @@
 </div>
 
 @* ── Advance dialog ── *@
-<MudDialog @bind-IsVisible="_advanceDialogOpen"
+<MudDialog @bind-Visible="_advanceDialogOpen"
            Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
     <TitleContent>
         <MudText Typo="Typo.h6">Advance to next stage</MudText>
@@ -390,7 +390,7 @@
 </MudDialog>
 
 @* ── Finalize dialog ── *@
-<MudDialog @bind-IsVisible="_approveDialogOpen"
+<MudDialog @bind-Visible="_approveDialogOpen"
            Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
     <TitleContent>
         <MudText Typo="Typo.h6">Finalize workstream</MudText>
@@ -412,7 +412,7 @@
 </MudDialog>
 
 @* ── Send back dialog ── *@
-<MudDialog @bind-IsVisible="_sendBackDialogOpen"
+<MudDialog @bind-Visible="_sendBackDialogOpen"
            Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
     <TitleContent>
         <MudText Typo="Typo.h6">Send back for revision</MudText>
@@ -441,7 +441,7 @@
 </MudDialog>
 
 @* ── Flag item dialog ── *@
-<MudDialog @bind-IsVisible="_flagDialogOpen"
+<MudDialog @bind-Visible="_flagDialogOpen"
            Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
     <TitleContent>
         <MudText Typo="Typo.h6">Flag item — needs revision</MudText>
@@ -471,7 +471,7 @@
 </MudDialog>
 
 @* ── Add checklist item dialog ── *@
-<MudDialog @bind-IsVisible="_addItemDialogOpen"
+<MudDialog @bind-Visible="_addItemDialogOpen"
            Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
     <TitleContent>
         <MudText Typo="Typo.h6">Add checklist item</MudText>

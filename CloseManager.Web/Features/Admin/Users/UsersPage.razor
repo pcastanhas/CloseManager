@@ -262,7 +262,7 @@
 </div>
 
 @* ── Deactivate dialog ── *@
-<MudDialog @bind-IsVisible="_deactivateOpen"
+<MudDialog @bind-Visible="_deactivateOpen"
            Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
     <TitleContent>
         <MudText Typo="Typo.h6">Deactivate user — @_deactivateTarget?.DisplayName?</MudText>

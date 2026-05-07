@@ -185,7 +185,7 @@ else
 }
 
 @* ─────────────── OPEN PERIOD DIALOG ─────────────── *@
-<MudDialog @bind-IsVisible="_openDialogVisible"
+<MudDialog @bind-Visible="_openDialogVisible"
            Options="@(new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true })">
     <TitleContent>
         <MudText Typo="Typo.h6">Open period</MudText>
@@ -256,7 +256,7 @@ else
 </MudDialog>
 
 @* ─────────────── CLOSE PERIOD DIALOG ─────────────── *@
-<MudDialog @bind-IsVisible="_closeDialogVisible"
+<MudDialog @bind-Visible="_closeDialogVisible"
            Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
     <TitleContent>
         <MudText Typo="Typo.h6">Close @_actionTarget?.PeriodLabel</MudText>
@@ -291,7 +291,7 @@ else
 </MudDialog>
 
 @* ─────────────── REOPEN DIALOG ─────────────── *@
-<MudDialog @bind-IsVisible="_reopenDialogVisible"
+<MudDialog @bind-Visible="_reopenDialogVisible"
            Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
     <TitleContent>
         <MudText Typo="Typo.h6">Reopen @_actionTarget?.PeriodLabel</MudText>
@@ -317,7 +317,7 @@ else
 </MudDialog>
 
 @* ─────────────── ENTITY CLOSE EARLY DIALOG ─────────────── *@
-<MudDialog @bind-IsVisible="_entityCloseDialogVisible"
+<MudDialog @bind-Visible="_entityCloseDialogVisible"
            Options="@(new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true })">
     <TitleContent>
         <MudText Typo="Typo.h6">Close @_entityCloseTarget?.EntityName early</MudText>

@@ -121,7 +121,7 @@ else
 }
 
 @* ── Add / Edit modal ── *@
-<MudDialog @bind-IsVisible="_modalOpen"
+<MudDialog @bind-Visible="_modalOpen"
            Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
     <TitleContent>
         <MudText Typo="Typo.h6">@(_editing is null ? "Add role" : "Edit role")</MudText>
@@ -160,7 +160,7 @@ else
 </MudDialog>
 
 @* ── Deactivate confirmation dialog ── *@
-<MudDialog @bind-IsVisible="_deactivateOpen"
+<MudDialog @bind-Visible="_deactivateOpen"
            Options="@(new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true })">
     <TitleContent>
         <MudText Typo="Typo.h6">Deactivate role — @_deactivateTarget?.Name?</MudText>

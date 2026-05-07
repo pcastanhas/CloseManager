@@ -162,7 +162,7 @@
 </MudButton>
 
 @* ── Workstream name/code modal ── *@
-<MudDialog @bind-IsVisible="_wsModalOpen"
+<MudDialog @bind-Visible="_wsModalOpen"
            Options="@(new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true })">
     <TitleContent>
         <MudText Typo="Typo.h6">@(_wsEditing is null ? "Add workstream" : "Edit workstream")</MudText>
@@ -183,7 +183,7 @@
 </MudDialog>
 
 @* ── Approver edit modal ── *@
-<MudDialog @bind-IsVisible="_approverModalOpen"
+<MudDialog @bind-Visible="_approverModalOpen"
            Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
     <TitleContent>
         <MudText Typo="Typo.h6">Edit approver</MudText>
@@ -236,7 +236,7 @@
 </MudDialog>
 
 @* ── Discard confirmation ── *@
-<MudDialog @bind-IsVisible="_discardOpen"
+<MudDialog @bind-Visible="_discardOpen"
            Options="@(new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true })">
     <TitleContent>
         <MudText Typo="Typo.h6">Discard changes?</MudText>
@@ -252,7 +252,7 @@
 </MudDialog>
 
 @* ── Save dialog ── *@
-<MudDialog @bind-IsVisible="_saveDialogOpen"
+<MudDialog @bind-Visible="_saveDialogOpen"
            Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
     <TitleContent>
         <MudText Typo="Typo.h6">Save as v@(_priorVersion.HasValue ? _priorVersion + 1 : 1)</MudText>
