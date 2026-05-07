@@ -1,0 +1,888 @@
+@page "/work/{WorkstreamId:long}/review"
+@attribute [Authorize]
+@inject AppDbContext Db
+@inject WorkstreamService WorkstreamSvc
+@inject CurrentUserService CurrentUser
+@inject AppSettingService Settings
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+@using CloseManager.Web.Data
+@using CloseManager.Web.Data.Entities
+@using CloseManager.Web.Data.Services
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>@(_workstream?.Name ?? "Workstream") — CloseManager</PageTitle>
+
+@if (_workstream is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    return;
+}
+
+@* ── Breadcrumb ── *@
+<div class="d-flex align-center gap-1 mb-3" style="font-size:13px;color:var(--mud-palette-text-secondary)">
+    <MudLink Href="/work">Work items</MudLink>
+    <MudIcon Icon="@Icons.Material.Outlined.ChevronRight" Style="font-size:14px" />
+    <span>@_workstream.Name</span>
+</div>
+
+@* ── Locked-by-you banner ── *@
+@if (_isLockedBySelf)
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3"
+              Action="@("Take over lock")"
+              OnClick="@(async () => await AcquireLockAsync())">
+        You have this workstream open in another session. Click to take over the lock in this window.
+    </MudAlert>
+}
+
+@* ── Stage indicator header ── *@
+<div style="border:0.5px solid var(--mud-palette-divider);border-radius:4px;padding:10px 14px;
+            margin-bottom:1rem;background:var(--mud-palette-surface);display:flex;align-items:center;gap:12px">
+    @for (int i = 0; i < _stages.Count; i++)
+    {
+        var stage = _stages[i];
+        var isCurrent = i == _workstream.CurrentStageIndex;
+        var isDone = i < _workstream.CurrentStageIndex || stage.Outcome == "Advanced";
+        var idx = i;
+        <div class="d-flex align-center gap-1">
+            @if (idx > 0)
+            {
+                <MudIcon Icon="@Icons.Material.Outlined.ChevronRight"
+                         Style="font-size:14px;color:var(--mud-palette-text-disabled)" />
+            }
+            <div style="display:flex;align-items:center;gap:4px">
+                <MudIcon Icon="@(isDone ? Icons.Material.Outlined.CheckCircle
+                                 : isCurrent ? Icons.Material.Outlined.RadioButtonChecked
+                                 : Icons.Material.Outlined.RadioButtonUnchecked)"
+                         Style="@($"font-size:14px;color:{(isDone ? "#1D9E75" : isCurrent ? "var(--mud-palette-primary)" : "var(--mud-palette-text-disabled)")}")" />
+                <span style="font-size:12px;font-weight:@(isCurrent ? "500" : "400");
+                             color:@(isCurrent ? "var(--mud-palette-text-primary)" : "var(--mud-palette-text-secondary)")">
+                    @(stage.DisplayName ?? (stage.StageKind == "Prepare" ? "Prepare" : $"Stage {idx}"))
+                    @if (isCurrent && stage.IsFinalApproval) { <span style="color:#1D9E75;font-size:11px"> (final)</span> }
+                </span>
+            </div>
+        </div>
+    }
+    <div style="flex:1" />
+    <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+        Round @_workstream.Round · @FormatPeriod(_workstream.Period)
+    </MudText>
+</div>
+
+@* ── Audit trail strip ── *@
+@if (_auditEvents.Any())
+{
+    <div Class="mb-3" style="overflow-x:auto">
+        <div class="d-flex align-center gap-2 pb-1" style="min-width:max-content">
+            @foreach (var ev in _auditEvents)
+            {
+                <div style="display:flex;flex-direction:column;align-items:center;gap:2px;min-width:80px">
+                    <div style="width:8px;height:8px;border-radius:50%;background:@AuditDotColor(ev.Action)" />
+                    <span style="font-size:10px;color:var(--mud-palette-text-secondary);text-align:center;white-space:nowrap">
+                        @AuditLabel(ev.Action)
+                    </span>
+                    <span style="font-size:10px;color:var(--mud-palette-text-disabled)">
+                        @FormatAge(ev.OccurredAtUtc)
+                    </span>
+                </div>
+                @if (ev != _auditEvents.Last())
+                {
+                    <div style="width:20px;height:1px;background:var(--mud-palette-divider);flex-shrink:0;margin-top:-10px" />
+                }
+            }
+        </div>
+    </div>
+}
+
+@* ── Prior stages accordion ── *@
+@if (_priorStages.Any())
+{
+    <div class="mb-4">
+        @foreach (var prior in _priorStages)
+        {
+            <MudExpansionPanel Dense="true"
+                               Text="@($"Stage {prior.OrderIndex} · {prior.DisplayName ?? prior.StageKind} — {prior.OutcomeLabel}")"
+                               Style="border:0.5px solid var(--mud-palette-divider);border-radius:4px;margin-bottom:4px">
+                @if (!prior.Items.Any())
+                {
+                    <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                        No checklist items recorded for this stage.
+                    </MudText>
+                }
+                @foreach (var item in prior.Items)
+                {
+                    <div class="d-flex align-center gap-2 mb-1 pa-1"
+                         style="border-radius:3px;background:@(item.ReviewerStatus == "Approved" ? "#F0FAF6" : item.ReviewerStatus == "NeedsRevision" ? "#FFF8EC" : "transparent")">
+                        <MudIcon Icon="@(item.ReviewerStatus == "Approved"
+                                     ? Icons.Material.Outlined.CheckCircle
+                                     : item.ReviewerStatus == "NeedsRevision"
+                                     ? Icons.Material.Outlined.Flag
+                                     : Icons.Material.Outlined.RadioButtonUnchecked)"
+                                 Style="@($"font-size:14px;color:{(item.ReviewerStatus == "Approved" ? "#1D9E75" : item.ReviewerStatus == "NeedsRevision" ? "#F59E0B" : "var(--mud-palette-text-disabled)")}")" />
+                        <MudText Typo="Typo.body2" Style="font-size:12px;flex:1">@item.Text</MudText>
+                        @if (item.Comments.Any())
+                        {
+                            <MudIcon Icon="@Icons.Material.Outlined.Comment"
+                                     Style="font-size:12px;color:var(--mud-palette-text-secondary)" />
+                            <span style="font-size:10px;color:var(--mud-palette-text-secondary)">@item.Comments.Count</span>
+                        }
+                    </div>
+                    @foreach (var c in item.Comments)
+                    {
+                        <div class="ml-5 mb-1 pa-2"
+                             style="border-left:2px solid var(--mud-palette-divider);font-size:11px">
+                            <span style="font-weight:500">@c.Author</span>
+                            <span style="color:var(--mud-palette-text-secondary)"> · @c.PostedAt.ToString("MMM d, HH:mm")</span>
+                            <div>@c.Body</div>
+                        </div>
+                    }
+                }
+            </MudExpansionPanel>
+        }
+    </div>
+}
+
+@* ── Page header with action buttons ── *@
+<div class="d-flex align-center justify-space-between mb-4">
+    <div>
+        <MudText Typo="Typo.h6" Style="font-weight:500">@_workstream.Name</MudText>
+        <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+            @_entityName · @_currentStageName
+        </MudText>
+    </div>
+    <div class="d-flex gap-2">
+        @if (!_lockHeld)
+        {
+            <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                       Disabled="@_acquiringLock"
+                       OnClick="AcquireLockAsync">
+                @if (_acquiringLock)
+                { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
+                else { <span>Claim to review</span> }
+            </MudButton>
+        }
+        else
+        {
+            @* Send back button — not available if we'd send back to a non-existent stage *@
+            @if (_workstream.CurrentStageIndex > 0)
+            {
+                <MudButton Variant="Variant.Outlined" Color="Color.Warning" Size="Size.Small"
+                           OnClick="@(() => _sendBackDialogOpen = true)">
+                    Needs revision
+                </MudButton>
+            }
+
+            @* Advance / Finalize *@
+            @if (_isFinalStage)
+            {
+                var itemsLeft = _checklist.Count(c => c.ReviewerStatus != "Approved");
+                <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small"
+                           Disabled="@(itemsLeft > 0 || _actioning)"
+                           OnClick="@(() => _approveDialogOpen = true)">
+                    @if (itemsLeft > 0) { <span>Finalize · @itemsLeft left</span> }
+                    else { <span>Finalize</span> }
+                </MudButton>
+            }
+            else
+            {
+                var itemsLeft = _checklist.Count(c => c.ReviewerStatus != "Approved");
+                var nextName = _stages.ElementAtOrDefault(_workstream.CurrentStageIndex + 1)?.DisplayName ?? "next stage";
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           Disabled="@(itemsLeft > 0 || _actioning)"
+                           OnClick="@(() => _advanceDialogOpen = true)">
+                    @if (itemsLeft > 0) { <span>Advance · @itemsLeft left</span> }
+                    else { <span>Advance to @nextName</span> }
+                </MudButton>
+            }
+        }
+    </div>
+</div>
+
+@* ── Approval progress bar ── *@
+@{
+    var approved = _checklist.Count(c => c.ReviewerStatus == "Approved");
+    var total = _checklist.Count;
+    var pct = total == 0 ? 100 : (int)(100.0 * approved / total);
+}
+<div class="mb-3">
+    <div class="d-flex justify-space-between mb-1">
+        <MudText Typo="Typo.caption">Checklist progress</MudText>
+        <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+            @approved / @total approved
+        </MudText>
+    </div>
+    <MudProgressLinear Value="@pct" Color="@(pct == 100 ? Color.Success : Color.Primary)"
+                       Rounded="true" Size="Size.Small" />
+</div>
+
+@* ── Two-column layout ── *@
+<div style="display:grid;grid-template-columns:1.1fr 1fr;gap:1.5rem;align-items:start">
+
+    @* ── Left: files + workstream comments ── *@
+    <div>
+        @* File version pills *@
+        @if (_files.Any())
+        {
+            <div class="d-flex align-center gap-2 mb-3" style="flex-wrap:wrap">
+                @foreach (var (f, i) in _files.Select((f, i) => (f, i)))
+                {
+                    <MudTooltip Text="@($"Uploaded {f.UploadedAt:MMM d} by {f.UploadedBy}")">
+                        <MudButton Size="Size.Small"
+                                   Variant="@(i == _files.Count - 1 ? Variant.Filled : Variant.Outlined)"
+                                   Color="@(i == _files.Count - 1 ? Color.Primary : Color.Default)"
+                                   OnClick="@(() => _selectedFileUrl = f.WebUrl)">
+                            v@(i + 1) @(i == _files.Count - 1 ? "(current)" : "")
+                        </MudButton>
+                    </MudTooltip>
+                }
+            </div>
+        }
+
+        @if (_files.Any())
+        {
+            var latest = _files.Last();
+            <MudPaper Elevation="0" Class="mb-4 pa-3"
+                      Style="border:0.5px solid var(--mud-palette-divider);border-radius:4px">
+                <MudText Typo="Typo.body2" Style="font-weight:500">@latest.FileName</MudText>
+                <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                    v@_files.Count · @latest.UploadedAt.ToString("MMM d, yyyy") · @latest.UploadedBy
+                </MudText>
+                <MudLink Href="@latest.WebUrl" Target="_blank" Style="font-size:12px">
+                    Open in SharePoint →
+                </MudLink>
+            </MudPaper>
+        }
+        else
+        {
+            <MudAlert Severity="Severity.Info" Dense="true" Class="mb-4">
+                No files have been uploaded yet.
+            </MudAlert>
+        }
+
+        @* Workstream-level comments *@
+        <MudText Typo="Typo.subtitle2" Class="mb-2">Comments</MudText>
+        @foreach (var comment in _wsComments)
+        {
+            <div class="mb-3 pa-3"
+                 style="border:0.5px solid var(--mud-palette-divider);border-radius:4px">
+                <div class="d-flex align-center justify-space-between mb-1">
+                    <MudText Typo="Typo.body2" Style="font-weight:500;font-size:13px">@comment.Author</MudText>
+                    <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                        @comment.PostedAt.ToString("MMM d, HH:mm")
+                    </MudText>
+                </div>
+                <MudText Typo="Typo.body2" Style="font-size:13px">@comment.Body</MudText>
+            </div>
+        }
+        @if (_lockHeld)
+        {
+            <div class="d-flex gap-2">
+                <MudTextField @bind-Value="_newComment" Placeholder="Add a comment…"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" Style="flex:1" />
+                <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                           Disabled="@string.IsNullOrWhiteSpace(_newComment)"
+                           OnClick="PostCommentAsync">Post</MudButton>
+            </div>
+        }
+    </div>
+
+    @* ── Right: approval checklist ── *@
+    <div>
+        <div class="d-flex align-center justify-space-between mb-2">
+            <MudText Typo="Typo.subtitle2">@_currentStageName checklist</MudText>
+            @if (_lockHeld)
+            {
+                <MudButton StartIcon="@Icons.Material.Outlined.Add" Size="Size.Small" Variant="Variant.Text"
+                           OnClick="@(() => _addItemDialogOpen = true)">
+                    Add item
+                </MudButton>
+            }
+        </div>
+
+        @if (!_checklist.Any())
+        {
+            <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                No checklist items for this stage.
+            </MudText>
+        }
+
+        @foreach (var item in _checklist)
+        {
+            <div class="mb-2 pa-2"
+                 style="border:0.5px solid var(--mud-palette-divider);border-radius:4px;
+                        background:@(item.ReviewerStatus == "Approved" ? "#F0FAF6"
+                                     : item.ReviewerStatus == "NeedsRevision" ? "#FFF8EC" : "white")">
+                <div class="d-flex align-center gap-2">
+                    <MudIcon Icon="@(item.ReviewerStatus == "Approved"
+                                 ? Icons.Material.Outlined.CheckCircle
+                                 : item.ReviewerStatus == "NeedsRevision"
+                                 ? Icons.Material.Outlined.Flag
+                                 : Icons.Material.Outlined.RadioButtonUnchecked)"
+                             Style="@($"font-size:16px;color:{(item.ReviewerStatus == "Approved" ? "#1D9E75" : item.ReviewerStatus == "NeedsRevision" ? "#F59E0B" : "var(--mud-palette-text-disabled)")}")" />
+                    <MudText Typo="Typo.body2" Style="font-size:13px;flex:1">
+                        @item.Text
+                        @if (item.IsAdHoc)
+                        {
+                            <MudChip T="string" Size="Size.Small" Style="font-size:10px;height:16px;margin-left:4px">ad hoc</MudChip>
+                        }
+                    </MudText>
+                    @if (_lockHeld)
+                    {
+                        @if (item.ReviewerStatus != "Approved")
+                        {
+                            <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Success"
+                                       OnClick="@(() => ApproveItemAsync(item))">
+                                Approve
+                            </MudButton>
+                            <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
+                                       OnClick="@(() => OpenFlagDialog(item))">
+                                Flag
+                            </MudButton>
+                        }
+                        else
+                        {
+                            <MudButton Size="Size.Small" Variant="Variant.Text"
+                                       OnClick="@(() => UnapproveItemAsync(item))">
+                                Undo
+                            </MudButton>
+                        }
+                    }
+                </div>
+
+                @* Inline comments on this checklist item *@
+                @foreach (var c in item.ItemComments)
+                {
+                    <div class="mt-1 ml-5 pa-2"
+                         style="border-left:2px solid @(item.ReviewerStatus == "NeedsRevision" ? "#F59E0B" : "var(--mud-palette-divider)");font-size:11px">
+                        <span style="font-weight:500">@c.Author</span>
+                        <span style="color:var(--mud-palette-text-secondary)"> · @c.PostedAt.ToString("MMM d, HH:mm")</span>
+                        <div>@c.Body</div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@* ── Advance dialog ── *@
+<MudDialog @bind-IsVisible="_advanceDialogOpen"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Advance to next stage</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2">
+            All @approved checklist items are approved.
+            The workstream will advance to <strong>@(_stages.ElementAtOrDefault(_workstream.CurrentStageIndex + 1)?.DisplayName ?? "the next stage")</strong>.
+        </MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _advanceDialogOpen = false)">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   Disabled="@_actioning" OnClick="AdvanceAsync">
+            @if (_actioning) { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
+            else { <span>Advance</span> }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@* ── Finalize dialog ── *@
+<MudDialog @bind-IsVisible="_approveDialogOpen"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Finalize workstream</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2">
+            All @approved checklist items are approved.
+            This will mark the workstream as <strong>Approved</strong> and close the review cycle.
+        </MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _approveDialogOpen = false)">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Success"
+                   Disabled="@_actioning" OnClick="ApproveFinalAsync">
+            @if (_actioning) { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
+            else { <span>Finalize</span> }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@* ── Send back dialog ── *@
+<MudDialog @bind-IsVisible="_sendBackDialogOpen"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Send back for revision</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-3">
+            The workstream will be sent back to
+            <strong>@(_stages.ElementAtOrDefault(_workstream.CurrentStageIndex - 1)?.DisplayName ?? "the prior stage")</strong>.
+            Round will increment to @(_workstream.Round + 1).
+        </MudText>
+        <MudTextField Label="Reason (required)" @bind-Value="_sendBackReason"
+                      Lines="3" Placeholder="Describe what needs to be addressed…"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => { _sendBackDialogOpen = false; _sendBackReason = string.Empty; })">
+            Cancel
+        </MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Warning"
+                   Disabled="@(string.IsNullOrWhiteSpace(_sendBackReason) || _actioning)"
+                   OnClick="SendBackAsync">
+            @if (_actioning) { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
+            else { <span>Send back</span> }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@* ── Flag item dialog ── *@
+<MudDialog @bind-IsVisible="_flagDialogOpen"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Flag item — needs revision</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_flagTargetItem is not null)
+        {
+            <MudText Typo="Typo.body2" Class="mb-2" Style="font-style:italic">
+                @_flagTargetItem.Text
+            </MudText>
+        }
+        <MudTextField Label="Comment (required)" @bind-Value="_flagComment"
+                      Lines="3" Placeholder="Describe what needs to be fixed…"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => { _flagDialogOpen = false; _flagComment = string.Empty; _flagTargetItem = null; })">
+            Cancel
+        </MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Warning"
+                   Disabled="@(string.IsNullOrWhiteSpace(_flagComment) || _actioning)"
+                   OnClick="FlagItemAsync">
+            @if (_actioning) { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
+            else { <span>Flag item</span> }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@* ── Add checklist item dialog ── *@
+<MudDialog @bind-IsVisible="_addItemDialogOpen"
+           Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Add checklist item</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudTextField Label="Item text" @bind-Value="_newItemText"
+                      Placeholder="Describe what to verify…"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => { _addItemDialogOpen = false; _newItemText = string.Empty; })">
+            Cancel
+        </MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   Disabled="@string.IsNullOrWhiteSpace(_newItemText)"
+                   OnClick="AddChecklistItemAsync">
+            Add
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [Parameter] public long WorkstreamId { get; set; }
+
+    // ── DTOs ──────────────────────────────────────────────────────────────────
+    record FileRow(string FileName, string WebUrl, DateTime UploadedAt, string UploadedBy);
+    record CommentDto(string Author, DateTime PostedAt, string Body);
+    record ChecklistRow(
+        long ChecklistItemId,
+        string Text,
+        string ReviewerStatus,
+        bool IsAdHoc,
+        List<CommentDto> ItemComments);
+    record StageRow(
+        int OrderIndex,
+        string StageKind,
+        string? DisplayName,
+        bool IsFinalApproval,
+        string? Outcome,
+        string OutcomeLabel,
+        List<ChecklistRow> Items);
+
+    // ── State ─────────────────────────────────────────────────────────────────
+    private Workstream? _workstream;
+    private string _entityName = string.Empty;
+    private string _currentStageName = string.Empty;
+    private bool _isFinalStage;
+
+    private List<FileRow> _files = [];
+    private List<CommentDto> _wsComments = [];
+    private List<ChecklistRow> _checklist = [];
+    private List<StageRow> _stages = [];
+    private List<StageRow> _priorStages = [];
+    private List<(DateTime OccurredAtUtc, string Action)> _auditEvents = [];
+
+    private long _userId;
+    private Guid _actorOid;
+    private bool _lockHeld, _isLockedBySelf, _acquiringLock, _actioning;
+    private string? _selectedFileUrl;
+    private string _newComment = string.Empty;
+
+    // Dialog state
+    private bool _advanceDialogOpen, _approveDialogOpen;
+    private bool _sendBackDialogOpen;
+    private string _sendBackReason = string.Empty;
+    private bool _flagDialogOpen;
+    private string _flagComment = string.Empty;
+    private ChecklistRow? _flagTargetItem;
+    private bool _addItemDialogOpen;
+    private string _newItemText = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _userId   = await CurrentUser.GetUserIdAsync();
+        _actorOid = await CurrentUser.GetEntraObjectIdAsync();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _workstream = await Db.Workstreams
+            .FirstOrDefaultAsync(w => w.WorkstreamId == WorkstreamId && !w.IsDeleted);
+
+        if (_workstream is null) { Nav.NavigateTo("/work"); return; }
+
+        _entityName = await Db.Entities
+            .Where(e => e.EntityId == _workstream.EntityId)
+            .Select(e => e.Name).FirstOrDefaultAsync() ?? string.Empty;
+
+        _lockHeld = _workstream.LockedByUserId == _userId
+                    && _workstream.LockExpiresAtUtc > DateTime.UtcNow;
+        _isLockedBySelf = _workstream.LockedByUserId == _userId && !_lockHeld;
+
+        // ── All stages (for the stage indicator) ───────────────────────────
+        var allStageData = await Db.WorkstreamStages
+            .Where(ws => ws.WorkstreamId == WorkstreamId && !ws.IsDeleted)
+            .OrderBy(ws => ws.OrderIndex)
+            .Select(ws => new
+            {
+                ws.OrderIndex, ws.StageKind, ws.DisplayName,
+                ws.IsFinalApproval, ws.Outcome, ws.WorkstreamStageId
+            })
+            .ToListAsync();
+
+        // ── Current stage info ─────────────────────────────────────────────
+        var currentStageData = allStageData.FirstOrDefault(s => s.OrderIndex == _workstream.CurrentStageIndex);
+        _currentStageName = currentStageData?.DisplayName
+                         ?? currentStageData?.StageKind
+                         ?? $"Stage {_workstream.CurrentStageIndex}";
+        _isFinalStage = currentStageData?.IsFinalApproval ?? false;
+
+        // ── Checklist for current stage ────────────────────────────────────
+        var currentStageId = currentStageData is null ? 0L
+            : allStageData.Where(s => s.OrderIndex == _workstream.CurrentStageIndex)
+                          .Select(s => s.WorkstreamStageId).FirstOrDefault();
+
+        var rawItems = await Db.ChecklistItems
+            .Where(ci => ci.WorkstreamId == WorkstreamId
+                      && ci.WorkstreamStageId == currentStageId
+                      && !ci.IsDeleted)
+            .OrderBy(ci => ci.OrderIndex)
+            .ThenBy(ci => ci.ChecklistItemId)
+            .Select(ci => new
+            {
+                ci.ChecklistItemId, ci.Text, ci.ReviewerStatus,
+                IsAdHoc = ci.SourceDefItemId == null
+            })
+            .ToListAsync();
+
+        var allItemIds = rawItems.Select(i => i.ChecklistItemId).ToList();
+        var itemComments = await Db.Comments
+            .Where(c => c.WorkstreamId == WorkstreamId
+                     && c.ChecklistItemId != null
+                     && allItemIds.Contains((long)c.ChecklistItemId!)
+                     && !c.IsDeleted)
+            .OrderBy(c => c.PostedAtUtc)
+            .Select(c => new { c.ChecklistItemId, c.Author.DisplayName, c.PostedAtUtc, c.Body })
+            .ToListAsync();
+
+        _checklist = rawItems.Select(i =>
+            new ChecklistRow(
+                i.ChecklistItemId, i.Text, i.ReviewerStatus, i.IsAdHoc,
+                itemComments
+                    .Where(c => c.ChecklistItemId == i.ChecklistItemId)
+                    .Select(c => new CommentDto(c.DisplayName, c.PostedAtUtc, c.Body))
+                    .ToList()
+            )).ToList();
+
+        // ── Prior stages (accordion) ───────────────────────────────────────
+        var priorStageRows = new List<StageRow>();
+        foreach (var s in allStageData.Where(s => s.OrderIndex < _workstream.CurrentStageIndex))
+        {
+            var priorItems = await Db.ChecklistItems
+                .Where(ci => ci.WorkstreamId == WorkstreamId
+                          && ci.WorkstreamStageId == s.WorkstreamStageId
+                          && !ci.IsDeleted)
+                .OrderBy(ci => ci.OrderIndex)
+                .Select(ci => new { ci.ChecklistItemId, ci.Text, ci.ReviewerStatus,
+                                    IsAdHoc = ci.SourceDefItemId == null })
+                .ToListAsync();
+
+            var priorItemIds = priorItems.Select(i => i.ChecklistItemId).ToList();
+            var priorComments = await Db.Comments
+                .Where(c => c.WorkstreamId == WorkstreamId
+                         && c.ChecklistItemId != null
+                         && priorItemIds.Contains((long)c.ChecklistItemId!)
+                         && !c.IsDeleted)
+                .OrderBy(c => c.PostedAtUtc)
+                .Select(c => new { c.ChecklistItemId, c.Author.DisplayName, c.PostedAtUtc, c.Body })
+                .ToListAsync();
+
+            var outcomeLabel = s.Outcome switch
+            {
+                "Advanced" => "advanced",
+                "SentBack" => "sent back",
+                _ => "in progress"
+            };
+
+            priorStageRows.Add(new StageRow(
+                s.OrderIndex, s.StageKind, s.DisplayName, s.IsFinalApproval, s.Outcome, outcomeLabel,
+                priorItems.Select(i =>
+                    new ChecklistRow(
+                        i.ChecklistItemId, i.Text, i.ReviewerStatus, i.IsAdHoc,
+                        priorComments
+                            .Where(c => c.ChecklistItemId == i.ChecklistItemId)
+                            .Select(c => new CommentDto(c.DisplayName, c.PostedAtUtc, c.Body))
+                            .ToList()
+                    )).ToList()
+            ));
+        }
+        _priorStages = priorStageRows;
+
+        // Build full stage list for the header indicator
+        _stages = allStageData.Select(s =>
+        {
+            var outcomeLabel = s.Outcome switch
+            {
+                "Advanced" => "advanced",
+                "SentBack" => "sent back",
+                _ => "in progress"
+            };
+            return new StageRow(
+                s.OrderIndex, s.StageKind, s.DisplayName,
+                s.IsFinalApproval, s.Outcome, outcomeLabel, []);
+        }).ToList();
+
+        // ── Files ──────────────────────────────────────────────────────────
+        _files = await Db.WorkstreamFiles
+            .Where(f => f.WorkstreamId == WorkstreamId && !f.IsDeleted)
+            .OrderBy(f => f.UploadedAtUtc)
+            .Select(f => new FileRow(f.FileName, f.SpWebUrl, f.UploadedAtUtc, f.UploadedBy.DisplayName))
+            .ToListAsync();
+
+        // ── Workstream-level comments ──────────────────────────────────────
+        _wsComments = await Db.Comments
+            .Where(c => c.WorkstreamId == WorkstreamId && !c.IsDeleted && c.ChecklistItemId == null)
+            .OrderBy(c => c.PostedAtUtc)
+            .Select(c => new CommentDto(c.Author.DisplayName, c.PostedAtUtc, c.Body))
+            .ToListAsync();
+
+        // ── Audit trail (last 15 events, most recent last) ─────────────────
+        _auditEvents = await Db.AuditEvents
+            .Where(e => e.WorkstreamId == WorkstreamId)
+            .OrderByDescending(e => e.OccurredAtUtc)
+            .Take(15)
+            .Select(e => new { e.OccurredAtUtc, e.Action })
+            .ToListAsync()
+            .ContinueWith(t => t.Result.Select(e => (e.OccurredAtUtc, e.Action))
+                                       .OrderBy(e => e.OccurredAtUtc).ToList());
+    }
+
+    // ── Actions ───────────────────────────────────────────────────────────────
+
+    private async Task AcquireLockAsync()
+    {
+        _acquiringLock = true;
+        var lockMinutes = await Settings.GetLockDurationMinutesAsync();
+        var acquired = await WorkstreamSvc.AcquireLockAsync(WorkstreamId, _userId, _actorOid, lockMinutes);
+        if (!acquired)
+            Snackbar.Add("Could not claim this workstream — it may be locked by another user.", Severity.Warning);
+        await LoadAsync();
+        _acquiringLock = false;
+    }
+
+    private async Task ApproveItemAsync(ChecklistRow item)
+    {
+        try
+        {
+            await WorkstreamSvc.ApproveChecklistItemAsync(item.ChecklistItemId, _userId, _actorOid);
+            await LoadAsync();
+        }
+        catch (Exception ex) { Snackbar.Add(ex.Message, Severity.Error); }
+    }
+
+    private async Task UnapproveItemAsync(ChecklistRow item)
+    {
+        var ci = await Db.ChecklistItems.FindAsync(item.ChecklistItemId);
+        if (ci is null) return;
+        ci.ReviewerStatus = "Pending";
+        ci.ReviewerMarkedAtUtc = null;
+        ci.ReviewerMarkedByUserId = null;
+        await Db.SaveChangesAsync();
+        await LoadAsync();
+    }
+
+    private void OpenFlagDialog(ChecklistRow item)
+    {
+        _flagTargetItem = item;
+        _flagComment = string.Empty;
+        _flagDialogOpen = true;
+    }
+
+    private async Task FlagItemAsync()
+    {
+        if (_flagTargetItem is null || string.IsNullOrWhiteSpace(_flagComment)) return;
+        _actioning = true;
+        try
+        {
+            await WorkstreamSvc.FlagChecklistItemAsync(
+                _flagTargetItem.ChecklistItemId, _userId, _actorOid, _flagComment);
+            _flagDialogOpen = false;
+            _flagComment = string.Empty;
+            _flagTargetItem = null;
+            await LoadAsync();
+        }
+        catch (Exception ex) { Snackbar.Add(ex.Message, Severity.Error); }
+        finally { _actioning = false; }
+    }
+
+    private async Task AdvanceAsync()
+    {
+        _actioning = true;
+        try
+        {
+            await WorkstreamSvc.AdvanceStageAsync(WorkstreamId, _userId, _actorOid);
+            _advanceDialogOpen = false;
+            Snackbar.Add("Stage advanced", Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Could not advance: {ex.Message}", Severity.Error); }
+        finally { _actioning = false; }
+    }
+
+    private async Task ApproveFinalAsync()
+    {
+        _actioning = true;
+        try
+        {
+            await WorkstreamSvc.ApproveFinalAsync(WorkstreamId, _userId, _actorOid);
+            _approveDialogOpen = false;
+            Snackbar.Add("Workstream finalized", Severity.Success);
+            Nav.NavigateTo("/work");
+        }
+        catch (Exception ex) { Snackbar.Add($"Could not finalize: {ex.Message}", Severity.Error); }
+        finally { _actioning = false; }
+    }
+
+    private async Task SendBackAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_sendBackReason)) return;
+        _actioning = true;
+        try
+        {
+            await WorkstreamSvc.SendBackToStageAsync(WorkstreamId, _userId, _actorOid, _sendBackReason);
+            _sendBackDialogOpen = false;
+            _sendBackReason = string.Empty;
+            Snackbar.Add("Sent back for revision", Severity.Warning);
+            Nav.NavigateTo("/work");
+        }
+        catch (Exception ex) { Snackbar.Add($"Could not send back: {ex.Message}", Severity.Error); }
+        finally { _actioning = false; }
+    }
+
+    private async Task PostCommentAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newComment)) return;
+        Db.Comments.Add(new Comment
+        {
+            WorkstreamId = WorkstreamId, AuthorUserId = _userId,
+            PostedAtUtc = DateTime.UtcNow, Body = _newComment
+        });
+        await Db.SaveChangesAsync();
+        _newComment = string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task AddChecklistItemAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newItemText)) return;
+
+        var stageId = await Db.WorkstreamStages
+            .Where(ws => ws.WorkstreamId == WorkstreamId
+                      && ws.OrderIndex == _workstream!.CurrentStageIndex
+                      && !ws.IsDeleted)
+            .Select(ws => ws.WorkstreamStageId)
+            .FirstOrDefaultAsync();
+
+        var maxOrder = await Db.ChecklistItems
+            .Where(ci => ci.WorkstreamId == WorkstreamId
+                      && ci.WorkstreamStageId == stageId && !ci.IsDeleted)
+            .Select(ci => (int?)ci.OrderIndex)
+            .MaxAsync() ?? -1;
+
+        Db.ChecklistItems.Add(new ChecklistItem
+        {
+            WorkstreamId     = WorkstreamId,
+            WorkstreamStageId = stageId,
+            AddedByUserId    = _userId,
+            AddedAtUtc       = DateTime.UtcNow,
+            OrderIndex       = maxOrder + 1,
+            Text             = _newItemText,
+            ReviewerStatus   = "Pending"
+        });
+        await Db.SaveChangesAsync();
+        _addItemDialogOpen = false;
+        _newItemText = string.Empty;
+        await LoadAsync();
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static string FormatPeriod(string period) =>
+        DateTime.TryParseExact(period, "yyyyMM",
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var d)
+        ? d.ToString("MMMM yyyy") : period;
+
+    private static string FormatAge(DateTime dt)
+    {
+        var diff = DateTime.UtcNow - dt;
+        if (diff.TotalHours < 1)  return $"{(int)diff.TotalMinutes}m";
+        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h";
+        return $"{(int)diff.TotalDays}d";
+    }
+
+    private static string AuditLabel(string action) => action switch
+    {
+        "Submitted"              => "Submitted",
+        "StageAdvanced"          => "Advanced",
+        "FinalApproved"          => "Approved",
+        "SentBack"               => "Sent back",
+        "FileUploaded"           => "File up",
+        "LockAcquired"           => "Claimed",
+        "ChecklistItemApproved"  => "✓ item",
+        "ChecklistItemFlagged"   => "⚑ item",
+        _                        => action.Length > 10 ? action[..10] : action
+    };
+
+    private static string AuditDotColor(string action) => action switch
+    {
+        "FinalApproved" or "StageAdvanced" => "#1D9E75",
+        "SentBack"                         => "#F59E0B",
+        "ChecklistItemFlagged"             => "#F59E0B",
+        _                                  => "var(--mud-palette-divider)"
+    };
+}

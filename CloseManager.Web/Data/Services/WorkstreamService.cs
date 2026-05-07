@@ -80,6 +80,42 @@ public class WorkstreamService
             commandType: System.Data.CommandType.StoredProcedure);
     }
 
+    // ── Reviewer transitions ──────────────────────────────────────────────────
+
+    public async Task AdvanceStageAsync(
+        long workstreamId, long userId, Guid actorEntraOid)
+    {
+        using var conn = GetConnection();
+        await conn.OpenAsync();
+        await conn.ExecuteAsync("sp_AdvanceStage",
+            new { WorkstreamId = workstreamId, UserId = userId, ActorEntraOid = actorEntraOid },
+            commandType: System.Data.CommandType.StoredProcedure,
+            commandTimeout: 30);
+    }
+
+    public async Task SendBackToStageAsync(
+        long workstreamId, long userId, Guid actorEntraOid, string reason)
+    {
+        using var conn = GetConnection();
+        await conn.OpenAsync();
+        await conn.ExecuteAsync("sp_SendBackToStage",
+            new { WorkstreamId = workstreamId, UserId = userId,
+                  ActorEntraOid = actorEntraOid, Reason = reason },
+            commandType: System.Data.CommandType.StoredProcedure,
+            commandTimeout: 30);
+    }
+
+    public async Task ApproveFinalAsync(
+        long workstreamId, long userId, Guid actorEntraOid)
+    {
+        using var conn = GetConnection();
+        await conn.OpenAsync();
+        await conn.ExecuteAsync("sp_ApproveFinal",
+            new { WorkstreamId = workstreamId, UserId = userId, ActorEntraOid = actorEntraOid },
+            commandType: System.Data.CommandType.StoredProcedure,
+            commandTimeout: 30);
+    }
+
     // ── Work-items query ──────────────────────────────────────────────────────
 
     public async Task<WorkItemsResult> GetWorkItemsAsync(long userId)
@@ -232,6 +268,60 @@ public class WorkstreamService
         return rows.ToList();
     }
 
+    // ── My History query ──────────────────────────────────────────────────────
+
+    public async Task<List<HistoryEventRow>> GetMyHistoryAsync(
+        long userId, string? period, IEnumerable<string>? actions,
+        DateTime? fromUtc, DateTime? toUtc)
+    {
+        using var conn = GetConnection();
+        await conn.OpenAsync();
+
+        const string sql = @"
+        SELECT
+            ae.AuditEventId,
+            ae.OccurredAtUtc,
+            ae.Action,
+            ae.WorkstreamId,
+            ae.Period,
+            ae.EntityId,
+            ae.Notes,
+            ae.TargetTable,
+            ae.TargetId,
+            w.Name  AS WorkstreamName,
+            w.Code  AS WorkstreamCode,
+            e.Name  AS EntityName,
+            e.Code  AS EntityCode
+        FROM AuditEvent ae
+        LEFT JOIN Workstream w ON w.WorkstreamId = ae.WorkstreamId AND w.IsDeleted = 0
+        LEFT JOIN Entity e     ON e.EntityId = ae.EntityId
+        WHERE ae.ActorUserId = @UserId
+          AND (@Period IS NULL OR ae.Period = @Period)
+          AND (@FromUtc IS NULL OR ae.OccurredAtUtc >= @FromUtc)
+          AND (@ToUtc   IS NULL OR ae.OccurredAtUtc <= @ToUtc)
+        ORDER BY ae.OccurredAtUtc DESC;";
+
+        var rows = await conn.QueryAsync<HistoryEventRow>(sql,
+            new { UserId = userId, Period = period,
+                  FromUtc = fromUtc, ToUtc = toUtc });
+
+        var actionSet = actions?.ToHashSet();
+        if (actionSet is { Count: > 0 })
+            return rows.Where(r => actionSet.Contains(r.ActionGroup)).ToList();
+
+        return rows.ToList();
+    }
+
+    public async Task<List<string>> GetMyHistoryPeriodsAsync(long userId)
+    {
+        using var conn = GetConnection();
+        await conn.OpenAsync();
+        var periods = await conn.QueryAsync<string>(
+            "SELECT DISTINCT Period FROM AuditEvent WHERE ActorUserId = @UserId AND Period IS NOT NULL ORDER BY Period DESC",
+            new { UserId = userId });
+        return periods.ToList();
+    }
+
     public async Task<string?> GetCurrentPeriodAsync()
     {
         var month = DateTime.UtcNow.ToString("yyyyMM");
@@ -347,4 +437,66 @@ public class DashboardEntityRow
 
     public bool IsStuck => CurrentStageEnteredAt.HasValue && StuckThresholdHours.HasValue
         && (DateTime.UtcNow - CurrentStageEnteredAt.Value).TotalHours > StuckThresholdHours.Value;
+}
+
+public class HistoryEventRow
+{
+    public long AuditEventId { get; set; }
+    public DateTime OccurredAtUtc { get; set; }
+    public string Action { get; set; } = string.Empty;
+    public long? WorkstreamId { get; set; }
+    public string? Period { get; set; }
+    public long? EntityId { get; set; }
+    public string? Notes { get; set; }
+    public string TargetTable { get; set; } = string.Empty;
+    public long TargetId { get; set; }
+    public string? WorkstreamName { get; set; }
+    public string? WorkstreamCode { get; set; }
+    public string? EntityName { get; set; }
+    public string? EntityCode { get; set; }
+
+    public string PeriodLabel => Period is null ? string.Empty
+        : DateTime.TryParseExact(Period, "yyyyMM",
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var d)
+          ? d.ToString("MMM yyyy") : Period;
+
+    /// <summary>Maps the raw Action string to the UI chip group label.</summary>
+    public string ActionGroup => Action switch
+    {
+        "Submitted"                => "Submitted",
+        "FinalApproved"            => "Approved",
+        "StageAdvanced"            => "Approved",
+        "SentBack"                 => "Sent back",
+        "ChecklistItemApproved"    => "Checked items",
+        "ChecklistItemMarkedReady" => "Checked items",
+        "ChecklistItemFlagged"     => "Checked items",
+        "FileUploaded"             => "Files",
+        "FileDeleted"              => "Files",
+        "CommentPosted"            => "Comments",
+        _                          => "Other"
+    };
+
+    public string ActionLabel => Action switch
+    {
+        "Submitted"                => "Submitted",
+        "FinalApproved"            => "Finalized",
+        "StageAdvanced"            => "Advanced stage",
+        "SentBack"                 => "Sent back",
+        "ChecklistItemApproved"    => "Approved item",
+        "ChecklistItemMarkedReady" => "Marked item ready",
+        "ChecklistItemFlagged"     => "Flagged item",
+        "FileUploaded"             => "Uploaded file",
+        "FileDeleted"              => "Deleted file",
+        "CommentPosted"            => "Posted comment",
+        _                          => Action
+    };
+
+    public string ActionColor => Action switch
+    {
+        "FinalApproved" or "StageAdvanced" => "#1D9E75",
+        "SentBack"                         => "#F59E0B",
+        "ChecklistItemFlagged"             => "#F59E0B",
+        _                                  => "var(--mud-palette-text-secondary)"
+    };
 }

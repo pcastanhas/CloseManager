@@ -58,7 +58,7 @@ else
                 {
                     <WorkItemTile Item="@item" UserId="@_userId"
                                   BorderColor="#E24B4A"
-                                  OnClick="@(() => Nav.NavigateTo($"/work/{item.WorkstreamId}"))" />
+                                  OnClick="@(() => Nav.NavigateTo(item.IsPreparer ? $"/work/{item.WorkstreamId}/review" : $"/work/{item.WorkstreamId}"))" />
                 }
             </div>
         </div>
@@ -84,7 +84,7 @@ else
                 {
                     <WorkItemTile Item="@item" UserId="@_userId"
                                   BorderColor="#EF9F27"
-                                  OnClick="@(() => Nav.NavigateTo($"/work/{item.WorkstreamId}"))" />
+                                  OnClick="@(() => Nav.NavigateTo(item.IsPreparer ? $"/work/{item.WorkstreamId}/review" : $"/work/{item.WorkstreamId}"))" />
                 }
             </div>
         </div>

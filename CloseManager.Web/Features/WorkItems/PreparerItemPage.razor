@@ -281,6 +281,19 @@
     {
         _userId  = await CurrentUser.GetUserIdAsync();
         _actorOid = await CurrentUser.GetEntraObjectIdAsync();
+
+        // If workstream is already past stage 0, route to the reviewer page
+        var stage = await Db.Workstreams
+            .Where(w => w.WorkstreamId == WorkstreamId && !w.IsDeleted)
+            .Select(w => w.CurrentStageIndex)
+            .FirstOrDefaultAsync();
+
+        if (stage > 0)
+        {
+            Nav.NavigateTo($"/work/{WorkstreamId}/review", replace: true);
+            return;
+        }
+
         await LoadAsync();
     }
 

@@ -1,9 +1,302 @@
 @page "/history"
 @attribute [Authorize]
+@inject WorkstreamService WorkstreamSvc
+@inject CurrentUserService CurrentUser
+@inject AppDbContext Db
+@inject IJSRuntime JS
+@using CloseManager.Web.Data
+@using CloseManager.Web.Data.Services
+@using Microsoft.EntityFrameworkCore
+@using System.Text
 
 <PageTitle>My history — CloseManager</PageTitle>
 
-<MudText Typo="Typo.h6" Style="font-weight:500;" Class="mb-4">My history</MudText>
-<MudText Typo="Typo.body2" Style="color: var(--mud-palette-text-secondary);">
-    Personal audit trail — implemented in Phase 7.
-</MudText>
+@* ── Page header ── *@
+<div class="d-flex align-center justify-space-between mb-4">
+    <div>
+        <MudText Typo="Typo.h6" Style="font-weight:500">My history</MudText>
+        @if (_displayName is not null)
+        {
+            <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                Your activity log — @_displayName
+            </MudText>
+        }
+    </div>
+    <MudButton StartIcon="@Icons.Material.Outlined.Download"
+               Variant="Variant.Outlined" Size="Size.Small"
+               Disabled="@(!_events.Any())"
+               OnClick="ExportCsvAsync">
+        Export CSV
+    </MudButton>
+</div>
+
+@* ── Filter row ── *@
+<div class="d-flex align-center gap-3 flex-wrap mb-4">
+    <MudSelect T="string" Value="@_selectedPeriod" ValueChanged="OnPeriodChanged"
+               Label="Period" Dense="true" Margin="Margin.Dense"
+               Style="min-width:140px" Variant="Variant.Outlined">
+        <MudSelectItem T="string" Value="@("")">All periods</MudSelectItem>
+        @foreach (var p in _periods)
+        {
+            <MudSelectItem T="string" Value="@p">@FormatPeriod(p)</MudSelectItem>
+        }
+    </MudSelect>
+
+    <MudDatePicker Label="From" Date="@_fromDate" DateChanged="OnFromDateChanged"
+                   Margin="Margin.Dense" Dense="true" Style="max-width:150px"
+                   Variant="Variant.Outlined" />
+    <MudDatePicker Label="To" Date="@_toDate" DateChanged="OnToDateChanged"
+                   Margin="Margin.Dense" Dense="true" Style="max-width:150px"
+                   Variant="Variant.Outlined" />
+
+    <div class="d-flex align-center gap-1 flex-wrap">
+        @foreach (var chip in _actionGroups)
+        {
+            var isOn = _activeGroups.Contains(chip);
+            <MudChip T="string"
+                     Color="@(isOn ? Color.Primary : Color.Default)"
+                     Variant="@(isOn ? Variant.Filled : Variant.Outlined)"
+                     Size="Size.Small"
+                     OnClick="@(() => ToggleGroupAsync(chip))">
+                @chip
+            </MudChip>
+        }
+    </div>
+
+    <MudLink OnClick="ResetFiltersAsync" Style="font-size:12px;cursor:pointer">Reset</MudLink>
+</div>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (!_groupedEvents.Any())
+{
+    <MudText Typo="Typo.body2" Style="color:var(--mud-palette-text-secondary)">
+        No activity found for the selected filters.
+    </MudText>
+}
+else
+{
+    @foreach (var group in _groupedEvents)
+    {
+        <div class="d-flex align-center gap-2 mb-2 mt-4">
+            <MudText Typo="Typo.subtitle2" Style="font-weight:500">@group.DateLabel</MudText>
+            <div style="flex:1;height:0.5px;background:var(--mud-palette-divider)" />
+            <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                @group.Events.Count event@(group.Events.Count == 1 ? "" : "s")
+            </MudText>
+        </div>
+
+        <div style="border-left:1px solid var(--mud-palette-divider);margin-left:4px;padding-left:16px">
+            @foreach (var ev in group.Events)
+            {
+                <div class="mb-2 pa-3"
+                     style="border:0.5px solid var(--mud-palette-divider);border-radius:4px;
+                            background:var(--mud-palette-surface);cursor:pointer;position:relative"
+                     @onclick="@(() => ToggleExpand(ev.AuditEventId))">
+
+                    @* Timeline dot *@
+                    <div style="position:absolute;left:-20px;top:50%;transform:translateY(-50%);
+                                width:7px;height:7px;border-radius:50%;
+                                background:@ev.ActionColor" />
+
+                    <div class="d-flex align-center justify-space-between">
+                        <div class="d-flex align-center gap-2 flex-wrap">
+                            <span style="@($"display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:500;background:{ev.ActionColor}22;color:{ev.ActionColor}")">
+                                @ev.ActionLabel
+                            </span>
+                            @if (ev.WorkstreamName is not null)
+                            {
+                                <MudText Typo="Typo.body2" Style="font-size:13px;font-weight:500">
+                                    @(ev.WorkstreamCode is not null ? $"{ev.WorkstreamCode} — " : "")@ev.WorkstreamName
+                                </MudText>
+                            }
+                            @if (ev.EntityName is not null)
+                            {
+                                <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                                    @ev.EntityName
+                                </MudText>
+                            }
+                        </div>
+                        <div class="d-flex align-center gap-2">
+                            @if (ev.PeriodLabel is { Length: > 0 })
+                            {
+                                <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                                    @ev.PeriodLabel
+                                </MudText>
+                            }
+                            <MudText Typo="Typo.caption" Style="color:var(--mud-palette-text-secondary)">
+                                @ev.OccurredAtUtc.ToLocalTime().ToString("HH:mm")
+                            </MudText>
+                            <MudIcon Icon="@(_expandedIds.Contains(ev.AuditEventId)
+                                            ? Icons.Material.Outlined.ExpandLess
+                                            : Icons.Material.Outlined.ExpandMore)"
+                                     Style="font-size:14px;color:var(--mud-palette-text-secondary)" />
+                        </div>
+                    </div>
+
+                    @if (ev.Notes is { Length: > 0 })
+                    {
+                        <MudText Typo="Typo.caption" Class="mt-1"
+                                 Style="color:var(--mud-palette-text-secondary);font-style:italic">
+                            @(ev.Notes.Length > 120 ? ev.Notes[..120] + "…" : ev.Notes)
+                        </MudText>
+                    }
+
+                    @if (_expandedIds.Contains(ev.AuditEventId))
+                    {
+                        <div class="mt-2 pa-2"
+                             style="background:var(--mud-palette-background);border-radius:3px;
+                                    font-size:11px;font-family:monospace;white-space:pre-wrap;
+                                    word-break:break-all;color:var(--mud-palette-text-secondary)">
+                            @if (ev.Notes is { Length: > 0 })
+                            {<div><strong>Notes:</strong> @ev.Notes</div>}
+                            <div style="color:var(--mud-palette-text-disabled);font-size:10px;margin-top:4px">
+                                Audit ID: @ev.AuditEventId · @ev.TargetTable #@ev.TargetId · @ev.OccurredAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    private List<HistoryEventRow> _events = [];
+    private List<(string DateLabel, List<HistoryEventRow> Events)> _groupedEvents = [];
+    private List<string> _periods = [];
+
+    private string _selectedPeriod = string.Empty;
+    private DateTime? _fromDate;
+    private DateTime? _toDate;
+    private readonly HashSet<long> _expandedIds = [];
+    private bool _loading = true;
+    private long _userId;
+    private string? _displayName;
+
+    private static readonly string[] _actionGroups =
+        ["Submitted", "Approved", "Sent back", "Checked items", "Files", "Comments", "Other"];
+
+    private readonly HashSet<string> _activeGroups = new(
+        ["Submitted", "Approved", "Sent back", "Checked items", "Files", "Comments", "Other"]);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _userId = await CurrentUser.GetUserIdAsync();
+        var oid = await CurrentUser.GetEntraObjectIdAsync();
+        _displayName = await Db.Users
+            .Where(u => u.EntraObjectId == oid)
+            .Select(u => u.DisplayName)
+            .FirstOrDefaultAsync();
+
+        _periods = await WorkstreamSvc.GetMyHistoryPeriodsAsync(_userId);
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        StateHasChanged();
+
+        DateTime? fromUtc = _fromDate?.ToUniversalTime();
+        DateTime? toUtc = _toDate?.Date.AddDays(1).ToUniversalTime();
+
+        _events = await WorkstreamSvc.GetMyHistoryAsync(
+            _userId,
+            string.IsNullOrEmpty(_selectedPeriod) ? null : _selectedPeriod,
+            _activeGroups,
+            fromUtc,
+            toUtc);
+
+        BuildGroups();
+        _loading = false;
+    }
+
+    private void BuildGroups()
+    {
+        var today = DateTime.Today;
+        _groupedEvents = _events
+            .GroupBy(e => e.OccurredAtUtc.ToLocalTime().Date)
+            .OrderByDescending(g => g.Key)
+            .Select(g =>
+            {
+                var label = g.Key == today               ? "Today"
+                          : g.Key == today.AddDays(-1)   ? "Yesterday"
+                          : g.Key.ToString("dddd, MMMM d");
+                return (label, g.OrderByDescending(e => e.OccurredAtUtc).ToList());
+            })
+            .ToList();
+    }
+
+    private void ToggleExpand(long id)
+    {
+        if (_expandedIds.Contains(id)) _expandedIds.Remove(id);
+        else _expandedIds.Add(id);
+    }
+
+    private async Task OnPeriodChanged(string period)
+    {
+        _selectedPeriod = period;
+        await LoadAsync();
+    }
+
+    private async Task OnFromDateChanged(DateTime? date)
+    {
+        _fromDate = date;
+        await LoadAsync();
+    }
+
+    private async Task OnToDateChanged(DateTime? date)
+    {
+        _toDate = date;
+        await LoadAsync();
+    }
+
+    private async Task ToggleGroupAsync(string group)
+    {
+        if (_activeGroups.Contains(group)) _activeGroups.Remove(group);
+        else _activeGroups.Add(group);
+        await LoadAsync();
+    }
+
+    private async Task ResetFiltersAsync()
+    {
+        _selectedPeriod = string.Empty;
+        _fromDate = null;
+        _toDate = null;
+        _activeGroups.Clear();
+        foreach (var g in _actionGroups) _activeGroups.Add(g);
+        await LoadAsync();
+    }
+
+    private async Task ExportCsvAsync()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("AuditEventId,OccurredAt,Action,WorkstreamCode,WorkstreamName,EntityCode,EntityName,Period,Notes");
+        foreach (var ev in _events)
+        {
+            sb.AppendLine(string.Join(",",
+                ev.AuditEventId,
+                ev.OccurredAtUtc.ToString("yyyy-MM-dd HH:mm:ss"),
+                Csv(ev.Action), Csv(ev.WorkstreamCode ?? ""), Csv(ev.WorkstreamName ?? ""),
+                Csv(ev.EntityCode ?? ""), Csv(ev.EntityName ?? ""),
+                Csv(ev.Period ?? ""), Csv(ev.Notes ?? "")));
+        }
+        var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(sb.ToString()));
+        await JS.InvokeVoidAsync("downloadFileFromBase64",
+            $"my-history-{DateTime.Today:yyyyMMdd}.csv", "text/csv", b64);
+    }
+
+    private static string Csv(string v) =>
+        v.Contains(',') || v.Contains('"') || v.Contains('\n')
+            ? $"\"{v.Replace("\"", "\"\"")}\""
+            : v;
+
+    private static string FormatPeriod(string period) =>
+        DateTime.TryParseExact(period, "yyyyMM",
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var d)
+        ? d.ToString("MMM yyyy") : period;
+}
