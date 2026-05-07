@@ -56,8 +56,8 @@
                     <MudTh Style="width:80px"></MudTh>
                 </HeaderContent>
                 <RowTemplate>
-                    <MudTr Style="@(context.IsActive ? "" : "opacity:0.55")"
-                           @onclick="@(() => SelectUser(context))" style="cursor:pointer">
+                    <MudTr Style="@($"cursor:pointer;{(context.IsActive ? "" : "opacity:0.55")}")"
+                           @onclick="@(() => SelectUser(context))">
                         <MudTd>
                             <div style="display:flex;align-items:center;gap:10px">
                                 <MudAvatar Style="width:30px;height:30px;font-size:11px;
