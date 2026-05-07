@@ -120,14 +120,15 @@
                 @if (_saving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
                 else { <span>Save</span> }
             </MudButton>
-            <MudButton Variant="Variant.Outlined" Size="Size.Small"
-                       StartIcon="@Icons.Material.Outlined.ElectricalServices"
-                       Disabled="@(!AllSpKeysSet() || _testingConnection)"
-                       Title="@(!AllSpKeysSet() ? "Configure all SharePoint settings first" : "")"
-                       OnClick="TestSharePointAsync">
-                @if (_testingConnection) { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
-                else { <span>Test connection</span> }
-            </MudButton>
+            <MudTooltip Text='@(!AllSpKeysSet() ? "Configure all SharePoint settings first" : "")'>
+                <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                           StartIcon="@Icons.Material.Outlined.ElectricalServices"
+                           Disabled="@(!AllSpKeysSet() || _testingConnection)"
+                           OnClick="TestSharePointAsync">
+                    @if (_testingConnection) { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
+                    else { <span>Test connection</span> }
+                </MudButton>
+            </MudTooltip>
         </div>
 
         @if (_connectionResult is not null)
