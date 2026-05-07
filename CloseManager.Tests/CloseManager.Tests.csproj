@@ -18,7 +18,7 @@
     </PackageReference>
 
     <!-- Blazor component testing -->
-    <PackageReference Include="bunit" Version="1.34.4" />
+    <PackageReference Include="bunit" Version="1.35.3" />
 
     <!-- Integration tests against real SQL Server -->
     <PackageReference Include="Testcontainers.MsSql" Version="3.10.0" />
