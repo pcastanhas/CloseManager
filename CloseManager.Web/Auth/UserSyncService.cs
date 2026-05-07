@@ -76,7 +76,7 @@ public class UserSyncService
         return user is { IsActive: false };
     }
 
-    internal static Guid GetEntraObjectId(ClaimsPrincipal principal)
+    public static Guid GetEntraObjectId(ClaimsPrincipal principal)
     {
         var oidString = principal.FindFirstValue("oid")
                      ?? principal.FindFirstValue("http://schemas.microsoft.com/identity/claims/objectidentifier");
