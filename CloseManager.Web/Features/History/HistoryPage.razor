@@ -53,17 +53,18 @@
         @foreach (var chip in _actionGroups)
         {
             var isOn = _activeGroups.Contains(chip);
+            var chipCopy = chip;
             <MudChip T="string"
                      Color="@(isOn ? Color.Primary : Color.Default)"
                      Variant="@(isOn ? Variant.Filled : Variant.Outlined)"
                      Size="Size.Small"
-                     OnClick="@(() => ToggleGroupAsync(chip))">
+                     OnClick="@(() => ToggleGroupAsync(chipCopy))">
                 @chip
             </MudChip>
         }
     </div>
 
-    <MudLink OnClick="ResetFiltersAsync" Style="font-size:12px;cursor:pointer">Reset</MudLink>
+    <MudLink OnClick="@ResetFiltersAsync" Style="font-size:12px;cursor:pointer">Reset</MudLink>
 </div>
 
 @if (_loading)
@@ -289,10 +290,11 @@ else
             $"my-history-{DateTime.Today:yyyyMMdd}.csv", "text/csv", b64);
     }
 
-    private static string Csv(string v) =>
-        v.Contains(',') || v.Contains('"') || v.Contains('\n')
-            ? $"\"{v.Replace("\"", "\"\"")}\""
-            : v;
+    private static string Csv(string v)
+    {
+        if (!v.Contains(',') && !v.Contains('"') && !v.Contains('\n')) return v;
+        return '"' + v.Replace("\"", "\"\"") + '"';
+    }
 
     private static string FormatPeriod(string period) =>
         DateTime.TryParseExact(period, "yyyyMM",

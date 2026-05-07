@@ -104,7 +104,8 @@
                     <MudTr>
                         <MudTd>
                             <MudText Typo="Typo.body2" Style="font-size:11px;color:var(--mud-palette-text-secondary)">
-                                @context.OccurredAtUtc.ToString("MMM d, yyyy")<br />
+                                @context.OccurredAtUtc.ToString("MMM d, yyyy")
+                                <br />
                                 @context.OccurredAtUtc.ToString("HH:mm:ss") UTC
                             </MudText>
                         </MudTd>
@@ -369,8 +370,10 @@
     }
 
     private static string CsvEsc(string s)
-        => s.Contains(',') || s.Contains('"') || s.Contains('\n')
-            ? $"\"{s.Replace("\"", "\"\"")}\"" : s;
+    {
+        if (!s.Contains(',') && !s.Contains('"') && !s.Contains('\n')) return s;
+        return '"' + s.Replace("\"", "\"\"") + '"'; 
+    }
 
     private static string ActionBadgeStyle(string action) => action switch
     {
