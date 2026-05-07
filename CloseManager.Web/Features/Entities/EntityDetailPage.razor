@@ -138,9 +138,11 @@
                                     @a.UserUpn
                                 </MudText>
                             </div>
-                            <MudIconButton Icon="@Icons.Material.Outlined.PersonRemove"
-                                           Size="Size.Small" Title="Remove assignment"
-                                           OnClick="@(() => RemoveAssignmentAsync(a))" />
+                            <MudTooltip Text="Remove assignment">
+                                <MudIconButton Icon="@Icons.Material.Outlined.PersonRemove"
+                                               Size="Size.Small"
+                                               OnClick="@(() => RemoveAssignmentAsync(a))" />
+                            </MudTooltip>
                         </div>
                     }
                 </MudPaper>
