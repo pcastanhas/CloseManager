@@ -72,10 +72,11 @@
                 else if (_results is not null)
                 { <span><strong style="color:var(--mud-palette-text-primary)">@_totalCount</strong> events matching your filters</span> }
             </MudText>
-            <MudIconButton Icon="@(_sortDesc ? Icons.Material.Outlined.ArrowDownward : Icons.Material.Outlined.ArrowUpward)"
-                           Size="Size.Small" Title="@(_sortDesc ? "Newest first" : "Oldest first")"
-                           OnClick="@(() => { _sortDesc = !_sortDesc; _ = SearchAsync(); })" />
-        </div>
+            <MudTooltip Text='@(_sortDesc ? "Newest first" : "Oldest first")'>
+                <MudIconButton Icon="@(_sortDesc ? Icons.Material.Outlined.ArrowDownward : Icons.Material.Outlined.ArrowUpward)"
+                               Size="Size.Small"
+                               OnClick="@(() => { _sortDesc = !_sortDesc; _ = SearchAsync(); })" />
+            </MudTooltip>
 
         @if (_loading)
         {
