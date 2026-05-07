@@ -1,6 +1,7 @@
 using CloseManager.Web.Auth;
 using CloseManager.Web.Data;
 using CloseManager.Web.Data.Services;
+using CloseManager.Web.Graph;
 using CloseManager.Web.Jobs;
 using Hangfire;
 using Hangfire.SqlServer;
@@ -72,7 +73,7 @@ try
     builder.Services.AddScoped<CurrentUserService>();
     builder.Services.AddScoped<PeriodService>();
     builder.Services.AddScoped<WorkstreamService>();
-    builder.Services.AddScoped<Graph.SharePointService>();
+    builder.Services.AddScoped<SharePointService>();
     builder.Services.AddHttpContextAccessor();
 
     // SignalR for period-open progress
